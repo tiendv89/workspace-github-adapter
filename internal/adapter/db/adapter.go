@@ -17,6 +17,8 @@ import (
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 )
 
+var _ domain.DbWorkspaceAdapter = (*Adapter)(nil)
+
 // Adapter implements domain.DbWorkspaceAdapter.
 type Adapter struct {
 	pool *pgxpool.Pool
