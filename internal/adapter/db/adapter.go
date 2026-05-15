@@ -549,22 +549,19 @@ func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUI
 }
 
 // upsertFeatureActivity normalizes feature-level activity events (scope_type=feature, task_id=NULL).
+// Uses the partial unique index on (workspace_id, feature_id, sequence) WHERE task_id IS NULL.
 func upsertFeatureActivity(ctx context.Context, q *database.Queries, uid pgtype.UUID, f domain.FeatureSnapshot) error {
 	for i, evt := range f.Activity {
 		raw, _ := json.Marshal(evt) //nolint:errcheck
-		fid := f.FeatureID
-		seq := int32(i)
-
-		_, err := q.UpsertActivityEvent(ctx, database.UpsertActivityEventParams{
+		_, err := q.UpsertFeatureActivityEvent(ctx, database.UpsertFeatureActivityEventParams{
 			WorkspaceID: uid,
 			ScopeType:   "feature",
-			FeatureID:   &fid,
-			TaskID:      nil,
+			FeatureID:   f.FeatureID,
 			Action:      ptrStr(evt.Action),
 			Actor:       ptrStr(evt.Actor),
 			OccurredAt:  ptrStr(evt.OccurredAt.Format(time.RFC3339)),
 			Note:        ptrStr(evt.Note),
-			Sequence:    seq,
+			Sequence:    int32(i),
 			RawEvent:    raw,
 		})
 		if err != nil {
@@ -575,23 +572,20 @@ func upsertFeatureActivity(ctx context.Context, q *database.Queries, uid pgtype.
 }
 
 // upsertTaskActivity normalizes task log entries (scope_type=task).
+// Uses the partial unique index on (workspace_id, feature_id, task_id, sequence) WHERE task_id IS NOT NULL.
 func upsertTaskActivity(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureID string, t domain.TaskSnapshot) error {
 	for i, evt := range t.Activity {
 		raw, _ := json.Marshal(evt) //nolint:errcheck
-		fid := featureID
-		tid := t.TaskID
-		seq := int32(i)
-
-		_, err := q.UpsertActivityEvent(ctx, database.UpsertActivityEventParams{
+		_, err := q.UpsertTaskActivityEvent(ctx, database.UpsertTaskActivityEventParams{
 			WorkspaceID: uid,
 			ScopeType:   "task",
-			FeatureID:   &fid,
-			TaskID:      &tid,
+			FeatureID:   featureID,
+			TaskID:      t.TaskID,
 			Action:      ptrStr(evt.Action),
 			Actor:       ptrStr(evt.Actor),
 			OccurredAt:  ptrStr(evt.OccurredAt.Format(time.RFC3339)),
 			Note:        ptrStr(evt.Note),
-			Sequence:    seq,
+			Sequence:    int32(i),
 			RawEvent:    raw,
 		})
 		if err != nil {

@@ -140,13 +140,17 @@ func (q *Queries) ListTaskActivityEvents(ctx context.Context, arg ListTaskActivi
 	return items, nil
 }
 
-const upsertActivityEvent = `-- name: UpsertActivityEvent :one
+// UpsertFeatureActivityEventParams parameters for feature-level activity (task_id IS NULL).
+// Targets partial index: WHERE feature_id IS NOT NULL AND task_id IS NULL.
+const upsertFeatureActivityEvent = `-- name: UpsertFeatureActivityEvent :one
 INSERT INTO workspace_activity_events (
     workspace_id, scope_type, feature_id, task_id, action, actor,
     occurred_at, note, sequence, raw_event, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
-ON CONFLICT (workspace_id, feature_id, task_id, sequence) DO UPDATE SET
+VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, now())
+ON CONFLICT (workspace_id, feature_id, sequence)
+    WHERE feature_id IS NOT NULL AND task_id IS NULL
+DO UPDATE SET
     scope_type  = EXCLUDED.scope_type,
     action      = EXCLUDED.action,
     actor       = EXCLUDED.actor,
@@ -156,11 +160,10 @@ ON CONFLICT (workspace_id, feature_id, task_id, sequence) DO UPDATE SET
 RETURNING id, workspace_id, scope_type, feature_id, task_id, action, actor,
           occurred_at, note, sequence, raw_event, created_at`
 
-type UpsertActivityEventParams struct {
+type UpsertFeatureActivityEventParams struct {
 	WorkspaceID pgtype.UUID
 	ScopeType   string
-	FeatureID   *string
-	TaskID      *string
+	FeatureID   string
 	Action      *string
 	Actor       *string
 	OccurredAt  *string
@@ -169,8 +172,71 @@ type UpsertActivityEventParams struct {
 	RawEvent    json.RawMessage
 }
 
-func (q *Queries) UpsertActivityEvent(ctx context.Context, arg UpsertActivityEventParams) (WorkspaceActivityEvent, error) {
-	row := q.db.QueryRow(ctx, upsertActivityEvent,
+func (q *Queries) UpsertFeatureActivityEvent(ctx context.Context, arg UpsertFeatureActivityEventParams) (WorkspaceActivityEvent, error) {
+	row := q.db.QueryRow(ctx, upsertFeatureActivityEvent,
+		arg.WorkspaceID,
+		arg.ScopeType,
+		arg.FeatureID,
+		arg.Action,
+		arg.Actor,
+		arg.OccurredAt,
+		arg.Note,
+		arg.Sequence,
+		arg.RawEvent,
+	)
+	var i WorkspaceActivityEvent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ScopeType,
+		&i.FeatureID,
+		&i.TaskID,
+		&i.Action,
+		&i.Actor,
+		&i.OccurredAt,
+		&i.Note,
+		&i.Sequence,
+		&i.RawEvent,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+// UpsertTaskActivityEventParams parameters for task-level activity (both feature_id and task_id non-null).
+// Targets partial index: WHERE feature_id IS NOT NULL AND task_id IS NOT NULL.
+const upsertTaskActivityEvent = `-- name: UpsertTaskActivityEvent :one
+INSERT INTO workspace_activity_events (
+    workspace_id, scope_type, feature_id, task_id, action, actor,
+    occurred_at, note, sequence, raw_event, created_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+ON CONFLICT (workspace_id, feature_id, task_id, sequence)
+    WHERE feature_id IS NOT NULL AND task_id IS NOT NULL
+DO UPDATE SET
+    scope_type  = EXCLUDED.scope_type,
+    action      = EXCLUDED.action,
+    actor       = EXCLUDED.actor,
+    occurred_at = EXCLUDED.occurred_at,
+    note        = EXCLUDED.note,
+    raw_event   = EXCLUDED.raw_event
+RETURNING id, workspace_id, scope_type, feature_id, task_id, action, actor,
+          occurred_at, note, sequence, raw_event, created_at`
+
+type UpsertTaskActivityEventParams struct {
+	WorkspaceID pgtype.UUID
+	ScopeType   string
+	FeatureID   string
+	TaskID      string
+	Action      *string
+	Actor       *string
+	OccurredAt  *string
+	Note        *string
+	Sequence    int32
+	RawEvent    json.RawMessage
+}
+
+func (q *Queries) UpsertTaskActivityEvent(ctx context.Context, arg UpsertTaskActivityEventParams) (WorkspaceActivityEvent, error) {
+	row := q.db.QueryRow(ctx, upsertTaskActivityEvent,
 		arg.WorkspaceID,
 		arg.ScopeType,
 		arg.FeatureID,
