@@ -19,9 +19,9 @@ import (
 var timestampFormats = []string{
 	time.RFC3339Nano,
 	time.RFC3339,
-	"2006-01-02T15:04:05-0700",    // no colon in offset
+	"2006-01-02T15:04:05-0700", // no colon in offset
 	"2006-01-02T15:04:05.999999999-0700",
-	"2006-01-02T15:04:05Z0700",    // Z or numeric offset
+	"2006-01-02T15:04:05Z0700", // Z or numeric offset
 }
 
 // parseTimestamp attempts to parse a timestamp string using known formats.
@@ -41,10 +41,10 @@ func parseTimestamp(s string) time.Time {
 
 // workspaceYAML mirrors the relevant fields from workspace.yaml.
 type workspaceYAML struct {
-	Name    string     `yaml:"name"`
-	Repos   []repoYAML `yaml:"repos"`
-	Git     gitYAML    `yaml:"git"`
-	ManagementRepo string `yaml:"management_repo"`
+	Name           string     `yaml:"name"`
+	Repos          []repoYAML `yaml:"repos"`
+	Git            gitYAML    `yaml:"git"`
+	ManagementRepo string     `yaml:"management_repo"`
 }
 
 type repoYAML struct {
@@ -58,13 +58,13 @@ type gitYAML struct {
 
 // featureStatusYAML mirrors the relevant fields from docs/features/*/status.yaml.
 type featureStatusYAML struct {
-	Feature     string                 `yaml:"feature"`
-	Title       string                 `yaml:"title"`
-	Status      string                 `yaml:"status"`
-	Stage       string                 `yaml:"stage"`
-	NextAction  string                 `yaml:"next_action"`
-	History     []activityYAML         `yaml:"history"`
-	Stages      map[string]interface{} `yaml:"stages"`
+	Feature    string                 `yaml:"feature"`
+	Title      string                 `yaml:"title"`
+	Status     string                 `yaml:"status"`
+	Stage      string                 `yaml:"stage"`
+	NextAction string                 `yaml:"next_action"`
+	History    []activityYAML         `yaml:"history"`
+	Stages     map[string]interface{} `yaml:"stages"`
 }
 
 type activityYAML struct {

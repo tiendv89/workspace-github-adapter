@@ -126,9 +126,9 @@ type treeEntry struct {
 
 // gitTreeResponse is the response from the Git Trees API.
 type gitTreeResponse struct {
-	SHA      string      `json:"sha"`
-	Tree     []treeEntry `json:"tree"`
-	Truncated bool       `json:"truncated"`
+	SHA       string      `json:"sha"`
+	Tree      []treeEntry `json:"tree"`
+	Truncated bool        `json:"truncated"`
 }
 
 // contentResponse is the response from the Contents API.

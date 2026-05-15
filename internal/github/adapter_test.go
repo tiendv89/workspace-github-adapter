@@ -787,9 +787,9 @@ func TestDiscoverFeatureIDs(t *testing.T) {
 
 func TestExtractFeatureID(t *testing.T) {
 	cases := []struct {
-		path    string
-		want    string
-		wantOK  bool
+		path   string
+		want   string
+		wantOK bool
 	}{
 		{"docs/features/alpha-feature/status.yaml", "alpha-feature", true},
 		{"docs/features/beta/status.yaml", "beta", true},
