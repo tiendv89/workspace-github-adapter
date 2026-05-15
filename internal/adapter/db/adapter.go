@@ -515,10 +515,10 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 }
 
 func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureID string, t domain.TaskSnapshot) error {
-	dependsOn, _ := json.Marshal(t.DependsOn)     //nolint:errcheck
-	execution, _ := json.Marshal(t.Execution)     //nolint:errcheck
-	pr, _ := json.Marshal(t.PR)                   //nolint:errcheck
-	wsPr, _ := json.Marshal(t.WorkspacePR)        //nolint:errcheck
+	dependsOn, _ := json.Marshal(t.DependsOn) //nolint:errcheck
+	execution, _ := json.Marshal(t.Execution) //nolint:errcheck
+	pr, _ := json.Marshal(t.PR)               //nolint:errcheck
+	wsPr, _ := json.Marshal(t.WorkspacePR)    //nolint:errcheck
 
 	_, err := q.UpsertWorkspaceTask(ctx, database.UpsertWorkspaceTaskParams{
 		WorkspaceID:   uid,

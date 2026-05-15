@@ -83,13 +83,13 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 				},
 				Tasks: []domain.TaskSnapshot{
 					{
-						TaskID:    "T1",
-						FeatureID: "my-feature",
-						Title:     "First Task",
-						Status:    "ready",
-						Repo:      "my-repo",
-						Branch:    "feature/my-feature-T1",
-						DependsOn: []string{},
+						TaskID:     "T1",
+						FeatureID:  "my-feature",
+						Title:      "First Task",
+						Status:     "ready",
+						Repo:       "my-repo",
+						Branch:     "feature/my-feature-T1",
+						DependsOn:  []string{},
 						SourcePath: "docs/features/my-feature/tasks/T1.yaml",
 						Activity: []domain.ActivityEvent{
 							{
