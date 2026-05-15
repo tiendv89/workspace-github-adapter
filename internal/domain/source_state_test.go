@@ -7,8 +7,6 @@ import (
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 )
 
-func ptr[T any](v T) *T { return &v }
-
 func TestDeriveSourceState_NilRun_IsStale(t *testing.T) {
 	state := domain.DeriveSourceState(nil, domain.DefaultStaleThreshold)
 	if !state.Stale {
