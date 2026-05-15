@@ -1,0 +1,26 @@
+id: T1
+title: Implement core adapter
+repo: workspace-backend
+status: done
+depends_on: []
+blocked_reason: null
+branch: feature/alpha-feature-T1
+execution:
+  actor_type: agent
+  last_updated_by: agent@example.com
+  last_updated_at: "2026-01-05T12:00:00+0000"
+pr:
+  url: https://github.com/example/repo/pull/1
+  status: merged
+workspace_pr:
+  url: https://github.com/example/workspace/pull/10
+  status: open
+log:
+  - action: created
+    by: lead@example.com
+    at: 2026-01-01T10:00:00+0000
+    note: Task created
+  - action: done
+    by: lead@example.com
+    at: 2026-01-05T14:00:00+0000
+    note: Work accepted
