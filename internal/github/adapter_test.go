@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -665,15 +666,25 @@ func TestImportWorkspaceMissingOptionalFiles(t *testing.T) {
 }
 
 func TestImportWorkspaceNetworkError(t *testing.T) {
-	// Point at a non-existent server.
-	adapter := &Adapter{token: ""}
+	// Simulate a network failure with a transport that always errors.
+	adapter := &adapterWithTransport{
+		Adapter:   &Adapter{token: ""},
+		transport: &errorTransport{},
+	}
 	_, err := adapter.ImportWorkspace(context.Background(), domain.ImportInput{
 		RepoURL:       "https://github.com/owner/repo",
 		DefaultBranch: "main",
 	})
-	// Network error should return a SourceError.
 	if err == nil {
-		t.Fatal("expected network error")
+		t.Fatal("expected network error, got nil")
+	}
+	// Should be mapped to a SourceError — either network or adapter.
+	se, ok := err.(domain.SourceError)
+	if !ok {
+		t.Fatalf("expected SourceError, got %T: %v", err, err)
+	}
+	if !se.Retryable {
+		t.Errorf("network error should be retryable, got: %+v", se)
 	}
 }
 
@@ -703,6 +714,13 @@ func TestSyncWorkspaceMissingRepoURL(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing repoURL")
 	}
+}
+
+// errorTransport is an http.RoundTripper that always returns a network error.
+type errorTransport struct{}
+
+func (e *errorTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("simulated network failure")
 }
 
 // --- Helper types for test transport injection ---
@@ -805,6 +823,88 @@ func TestTaskFileBase(t *testing.T) {
 		got := taskFileBase(tc.path)
 		if got != tc.want {
 			t.Errorf("taskFileBase(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+// --- Timestamp parsing tests ---
+
+func TestParseTimestamp(t *testing.T) {
+	cases := []struct {
+		input   string
+		wantNil bool // whether we expect zero time
+	}{
+		{"2026-05-15T14:06:12+0700", false},
+		{"2026-05-15T18:44:37.415Z", false},
+		{"2026-01-01T10:00:00+0000", false},
+		{"2026-01-05T12:00:00+0000", false},
+		{"", true},
+		{"not-a-timestamp", true},
+	}
+	for _, tc := range cases {
+		got := parseTimestamp(tc.input)
+		isZero := got.IsZero()
+		if isZero != tc.wantNil {
+			t.Errorf("parseTimestamp(%q): isZero=%v, wantNil=%v", tc.input, isZero, tc.wantNil)
+		}
+	}
+}
+
+func TestActivityEventOccurredAt(t *testing.T) {
+	log := []activityYAML{
+		{Action: "created", By: "dev@example.com", At: "2026-01-01T10:00:00+0000", Note: "Created"},
+	}
+	events := mapActivityLog(log, "feature", "alpha-feature", "")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].OccurredAt.IsZero() {
+		t.Error("expected non-zero OccurredAt for a valid timestamp")
+	}
+	if events[0].Actor != "dev@example.com" {
+		t.Errorf("expected actor 'dev@example.com', got %q", events[0].Actor)
+	}
+}
+
+func TestImportWorkspaceActivityTimestamps(t *testing.T) {
+	srv := fullWorkspaceServer(t)
+	defer srv.Close()
+
+	adapter := &adapterWithTransport{
+		Adapter:   &Adapter{token: "test-token"},
+		transport: proxyTransport(srv.URL),
+	}
+	snap, err := adapter.ImportWorkspace(context.Background(), domain.ImportInput{
+		RepoURL:       "https://github.com/owner/repo",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(snap.Features) == 0 {
+		t.Fatal("no features in snapshot")
+	}
+	feat := snap.Features[0]
+	// status_alpha.yaml has 2 history entries with valid timestamps.
+	if len(feat.Activity) != 2 {
+		t.Fatalf("expected 2 activity events, got %d", len(feat.Activity))
+	}
+	for i, ev := range feat.Activity {
+		if ev.OccurredAt.IsZero() {
+			t.Errorf("activity[%d]: OccurredAt should not be zero for valid timestamp", i)
+		}
+	}
+	// Task T1 has 2 log entries with valid timestamps.
+	if len(feat.Tasks) == 0 {
+		t.Fatal("no tasks in feature")
+	}
+	task := feat.Tasks[0]
+	if len(task.Activity) != 2 {
+		t.Fatalf("expected 2 task activity events, got %d", len(task.Activity))
+	}
+	for i, ev := range task.Activity {
+		if ev.OccurredAt.IsZero() {
+			t.Errorf("task activity[%d]: OccurredAt should not be zero for valid timestamp", i)
 		}
 	}
 }

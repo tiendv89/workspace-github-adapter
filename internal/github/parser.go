@@ -6,11 +6,38 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 )
+
+// timestampFormats lists the timestamp formats found in task/feature YAML files.
+// Task YAML files use offsets without colons (e.g. +0700, +0000); RFC3339 requires
+// colons (e.g. +07:00). We try both.
+var timestampFormats = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02T15:04:05-0700",    // no colon in offset
+	"2006-01-02T15:04:05.999999999-0700",
+	"2006-01-02T15:04:05Z0700",    // Z or numeric offset
+}
+
+// parseTimestamp attempts to parse a timestamp string using known formats.
+// Returns zero time if parsing fails — callers treat zero as "unknown".
+func parseTimestamp(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+	for _, f := range timestampFormats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Time{}
+}
 
 // workspaceYAML mirrors the relevant fields from workspace.yaml.
 type workspaceYAML struct {
@@ -142,12 +169,13 @@ func mapActivityLog(log []activityYAML, scope, featureID, taskID string) []domai
 	events := make([]domain.ActivityEvent, 0, len(log))
 	for _, e := range log {
 		events = append(events, domain.ActivityEvent{
-			Action:    e.Action,
-			Scope:     scope,
-			Actor:     e.By,
-			Note:      e.Note,
-			FeatureID: featureID,
-			TaskID:    taskID,
+			Action:     e.Action,
+			Scope:      scope,
+			Actor:      e.By,
+			OccurredAt: parseTimestamp(e.At),
+			Note:       e.Note,
+			FeatureID:  featureID,
+			TaskID:     taskID,
 		})
 	}
 	return events
