@@ -1,0 +1,9 @@
+name: Test Workspace
+management_repo: workspace-backend
+git:
+  branch_pattern: "feature/{feature_id}-{work_id}"
+repos:
+  - id: workspace-backend
+    base_branch: main
+  - id: workflow-backend
+    base_branch: main
