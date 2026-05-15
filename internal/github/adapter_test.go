@@ -716,6 +716,66 @@ func TestSyncWorkspaceMissingRepoURL(t *testing.T) {
 	}
 }
 
+// TestImportWorkspaceSingleCommitSHAFetch verifies that the commits endpoint is called
+// exactly once per ImportWorkspace call (not duplicated by getTree).
+func TestImportWorkspaceSingleCommitSHAFetch(t *testing.T) {
+	wsData := fixture(t, "workspace.yaml")
+	statusData := fixture(t, "status_alpha.yaml")
+	taskData := fixture(t, "task_T1.yaml")
+
+	treePaths := []string{
+		"workspace.yaml",
+		"docs/features/alpha-feature/status.yaml",
+		"docs/features/alpha-feature/tasks/T1.yaml",
+	}
+
+	commitCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/commits/main"):
+			commitCalls++
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(commitJSON("onlyonce123")))
+		case strings.Contains(path, "/git/trees/"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(treeJSON(treePaths)))
+		case strings.Contains(path, "/contents/workspace.yaml"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON(wsData)))
+		case strings.Contains(path, "/contents/docs/features/alpha-feature/status.yaml"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON(statusData)))
+		case strings.Contains(path, "/contents/docs/features/alpha-feature/tasks/T1.yaml"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON(taskData)))
+		default:
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	adapter := &adapterWithTransport{
+		Adapter:   &Adapter{token: "test-token"},
+		transport: proxyTransport(srv.URL),
+	}
+	snap, err := adapter.ImportWorkspace(context.Background(), domain.ImportInput{
+		RepoURL:       "https://github.com/owner/repo",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if snap.CommitSHA != "onlyonce123" {
+		t.Errorf("expected CommitSHA 'onlyonce123', got %q", snap.CommitSHA)
+	}
+	if commitCalls != 1 {
+		t.Errorf("expected commits endpoint to be called exactly once, got %d calls", commitCalls)
+	}
+}
+
 // errorTransport is an http.RoundTripper that always returns a network error.
 type errorTransport struct{}
 

@@ -92,7 +92,8 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 	}
 
 	// Fetch the full file tree in one request (Git Trees API, recursive=1).
-	tree, err := c.getTree(ctx, owner, repo, ref)
+	// Pass commitSHA directly so getTree doesn't need to re-resolve the ref.
+	tree, err := c.getTree(ctx, owner, repo, commitSHA)
 	if err != nil {
 		return nil, mapFetchError(err, owner, repo)
 	}

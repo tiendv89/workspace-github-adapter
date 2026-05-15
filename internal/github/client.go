@@ -146,14 +146,9 @@ type commitResponse struct {
 	SHA string `json:"sha"` // for tag and commit refs
 }
 
-// getTree fetches the full recursive file tree for a repo at the given ref.
-func (c *client) getTree(ctx context.Context, owner, repo, ref string) (*gitTreeResponse, error) {
-	// First get the commit SHA for the ref.
-	sha, err := c.getCommitSHA(ctx, owner, repo, ref)
-	if err != nil {
-		return nil, err
-	}
-
+// getTree fetches the full recursive file tree for a repo using the given commit SHA.
+// The caller is responsible for resolving the ref to a SHA via getCommitSHA before calling this.
+func (c *client) getTree(ctx context.Context, owner, repo, sha string) (*gitTreeResponse, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", apiBase, owner, repo, sha)
 	body, err := c.do(ctx, url)
 	if err != nil {
