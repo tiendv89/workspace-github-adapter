@@ -138,6 +138,48 @@ func (q *Queries) UpdateSyncRunFailed(ctx context.Context, arg UpdateSyncRunFail
 	return i, err
 }
 
+const listLatestSyncRunsPerWorkspace = `-- name: ListLatestSyncRunsPerWorkspace :many
+SELECT DISTINCT ON (workspace_id) id, workspace_id, trigger, branch, feature_id, task_id, mode, status,
+       commit_sha, changed_paths, started_at, finished_at, error_code, error_message, metadata
+FROM workspace_sync_runs
+ORDER BY workspace_id, started_at DESC`
+
+func (q *Queries) ListLatestSyncRunsPerWorkspace(ctx context.Context) ([]WorkspaceSyncRun, error) {
+	rows, err := q.db.Query(ctx, listLatestSyncRunsPerWorkspace)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkspaceSyncRun
+	for rows.Next() {
+		var i WorkspaceSyncRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Trigger,
+			&i.Branch,
+			&i.FeatureID,
+			&i.TaskID,
+			&i.Mode,
+			&i.Status,
+			&i.CommitSha,
+			&i.ChangedPaths,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.Metadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLatestSyncRun = `-- name: GetLatestSyncRun :one
 SELECT id, workspace_id, trigger, branch, feature_id, task_id, mode, status,
        commit_sha, changed_paths, started_at, finished_at, error_code, error_message, metadata

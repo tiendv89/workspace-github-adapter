@@ -53,10 +53,22 @@ func (a *Adapter) ListWorkspaces(ctx context.Context) ([]domain.WorkspaceSummary
 		return nil, dbErr("list workspaces", err)
 	}
 
+	// Batch-load the latest sync run per workspace to avoid N+1 queries.
+	allRuns, _ := a.q.ListLatestSyncRunsPerWorkspace(ctx) //nolint:errcheck
+	runMap := make(map[string]database.WorkspaceSyncRun, len(allRuns))
+	for _, run := range allRuns {
+		runMap[uuidStr(run.WorkspaceID)] = run
+	}
+
 	out := make([]domain.WorkspaceSummary, 0, len(rows))
 	for _, r := range rows {
-		latestRun, _ := a.q.GetLatestSyncRun(ctx, r.ID) //nolint:errcheck
-		ss := syncRunToSourceState(&latestRun, nil)
+		run, ok := runMap[uuidStr(r.ID)]
+		var ss domain.SourceState
+		if ok {
+			ss = syncRunToSourceState(&run, nil)
+		} else {
+			ss = syncRunToSourceState(nil, nil)
+		}
 
 		out = append(out, domain.WorkspaceSummary{
 			ID:          uuidStr(r.ID),
@@ -167,8 +179,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 	latestRun, _ := a.q.GetLatestSyncRun(ctx, uid) //nolint:errcheck
 	ss := syncRunToSourceState(&latestRun, nil)
 
-	allTasks, _ := a.q.ListWorkspaceTasks(ctx, uid) //nolint:errcheck
-	summary := rowToFeatureSummary(f, allTasks)
+	summary := rowToFeatureSummary(f, tasks)
 
 	docLinks := make([]domain.DocumentLink, 0, len(docs))
 	for _, d := range docs {
@@ -203,7 +214,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 }
 
 // GetTask returns the full task detail.
-func (a *Adapter) GetTask(ctx context.Context, workspaceID, taskID string) (*domain.TaskDetail, error) {
+func (a *Adapter) GetTask(ctx context.Context, workspaceID, featureID, taskID string) (*domain.TaskDetail, error) {
 	uid, err := parseUUID(workspaceID)
 	if err != nil {
 		return nil, err
@@ -211,6 +222,7 @@ func (a *Adapter) GetTask(ctx context.Context, workspaceID, taskID string) (*dom
 
 	t, err := a.q.GetWorkspaceTask(ctx, database.GetWorkspaceTaskParams{
 		WorkspaceID: uid,
+		FeatureID:   featureID,
 		TaskID:      taskID,
 	})
 	if err != nil {
@@ -218,11 +230,6 @@ func (a *Adapter) GetTask(ctx context.Context, workspaceID, taskID string) (*dom
 			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "task not found: "+taskID)
 		}
 		return nil, dbErr("get task", err)
-	}
-
-	var featureID string
-	if t.FeatureID != "" {
-		featureID = t.FeatureID
 	}
 
 	actEvents, _ := a.q.ListTaskActivityEvents(ctx, database.ListTaskActivityEventsParams{ //nolint:errcheck
@@ -350,12 +357,29 @@ func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*d
 
 	src, _ := a.q.GetGitHubSource(ctx, uid) //nolint:errcheck
 
+	// Pre-fetch all docs and tasks in two queries to avoid N+1 per feature.
+	allDocs, err := a.q.ListWorkspaceFeatureDocuments(ctx, uid)
+	if err != nil {
+		return nil, dbErr("list docs for snapshot", err)
+	}
+	allTasks, err := a.q.ListWorkspaceTasks(ctx, uid)
+	if err != nil {
+		return nil, dbErr("list tasks for snapshot", err)
+	}
+
+	// Group by feature_id for O(1) lookup inside buildFeatureSnapshotFromBatch.
+	docsByFeature := make(map[string][]database.WorkspaceFeatureDocument, len(features))
+	for _, d := range allDocs {
+		docsByFeature[d.FeatureID] = append(docsByFeature[d.FeatureID], d)
+	}
+	tasksByFeature := make(map[string][]database.WorkspaceTask, len(features))
+	for _, t := range allTasks {
+		tasksByFeature[t.FeatureID] = append(tasksByFeature[t.FeatureID], t)
+	}
+
 	featureSnapshots := make([]domain.FeatureSnapshot, 0, len(features))
 	for _, f := range features {
-		fs, err := buildFeatureSnapshot(ctx, a.q, uid, f)
-		if err != nil {
-			return nil, err
-		}
+		fs := buildFeatureSnapshotFromBatch(f, docsByFeature[f.FeatureID], tasksByFeature[f.FeatureID])
 		featureSnapshots = append(featureSnapshots, fs)
 	}
 
@@ -374,12 +398,13 @@ func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*d
 	}
 
 	return &domain.WorkspaceSnapshot{
-		WorkspaceID: workspaceID,
-		Name:        ws.Name,
-		Slug:        ws.Slug,
-		RepoURL:     repoURL,
-		Features:    featureSnapshots,
-		Repos:       repoEntries,
+		WorkspaceID:      workspaceID,
+		Name:             ws.Name,
+		Slug:             ws.Slug,
+		RepoURL:          repoURL,
+		ManagementRepoID: ws.ManagementRepoID,
+		Features:         featureSnapshots,
+		Repos:            repoEntries,
 	}, nil
 }
 
@@ -402,12 +427,16 @@ func (a *Adapter) GetLatestSyncRun(ctx context.Context, workspaceID string) (*do
 
 // upsertSnapshot is the transactional core of SaveSnapshot.
 func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, snap *domain.WorkspaceSnapshot) error {
+	mgmtRepoID := snap.ManagementRepoID
+	if mgmtRepoID == "" {
+		mgmtRepoID = "management-repo"
+	}
 	// Upsert workspace record (slug is the natural key).
 	_, err := q.UpsertWorkspace(ctx, database.UpsertWorkspaceParams{
 		ID:               uid,
 		Slug:             snap.Slug,
 		Name:             snap.Name,
-		ManagementRepoID: "management-repo",
+		ManagementRepoID: mgmtRepoID,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert workspace: %w", err)
@@ -597,24 +626,9 @@ func upsertTaskActivity(ctx context.Context, q *database.Queries, uid pgtype.UUI
 	return nil
 }
 
-// buildFeatureSnapshot reconstructs a FeatureSnapshot from the database rows.
-func buildFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, f database.WorkspaceFeature) (domain.FeatureSnapshot, error) {
-	docs, err := q.ListFeatureDocuments(ctx, database.ListFeatureDocumentsParams{
-		WorkspaceID: uid,
-		FeatureID:   f.FeatureID,
-	})
-	if err != nil {
-		return domain.FeatureSnapshot{}, dbErr("list docs for snapshot", err)
-	}
-
-	tasks, err := q.ListFeatureTasks(ctx, database.ListFeatureTasksParams{
-		WorkspaceID: uid,
-		FeatureID:   f.FeatureID,
-	})
-	if err != nil {
-		return domain.FeatureSnapshot{}, dbErr("list tasks for snapshot", err)
-	}
-
+// buildFeatureSnapshotFromBatch reconstructs a FeatureSnapshot from pre-fetched rows,
+// avoiding per-feature database queries.
+func buildFeatureSnapshotFromBatch(f database.WorkspaceFeature, docs []database.WorkspaceFeatureDocument, tasks []database.WorkspaceTask) domain.FeatureSnapshot {
 	docSnaps := make([]domain.DocumentSnapshot, 0, len(docs))
 	for _, d := range docs {
 		ds := domain.DocumentSnapshot{
@@ -651,7 +665,7 @@ func buildFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.U
 	if f.SourceHash != nil {
 		fs.SourceHash = *f.SourceHash
 	}
-	return fs, nil
+	return fs
 }
 
 // rowToTaskSnapshot converts a database row to a domain.TaskSnapshot.

@@ -48,6 +48,41 @@ func (q *Queries) ListFeatureDocuments(ctx context.Context, arg ListFeatureDocum
 	return items, nil
 }
 
+const listWorkspaceFeatureDocuments = `-- name: ListWorkspaceFeatureDocuments :many
+SELECT id, workspace_id, feature_id, document_type, source_path, url, created_at, updated_at
+FROM workspace_feature_documents
+WHERE workspace_id = $1
+ORDER BY feature_id, document_type`
+
+func (q *Queries) ListWorkspaceFeatureDocuments(ctx context.Context, workspaceID pgtype.UUID) ([]WorkspaceFeatureDocument, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceFeatureDocuments, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkspaceFeatureDocument
+	for rows.Next() {
+		var i WorkspaceFeatureDocument
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.FeatureID,
+			&i.DocumentType,
+			&i.SourcePath,
+			&i.URL,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertFeatureDocument = `-- name: UpsertFeatureDocument :one
 INSERT INTO workspace_feature_documents (
     workspace_id, feature_id, document_type, source_path, url, created_at, updated_at

@@ -4,6 +4,12 @@ FROM workspace_feature_documents
 WHERE workspace_id = $1 AND feature_id = $2
 ORDER BY document_type;
 
+-- name: ListWorkspaceFeatureDocuments :many
+SELECT id, workspace_id, feature_id, document_type, source_path, url, created_at, updated_at
+FROM workspace_feature_documents
+WHERE workspace_id = $1
+ORDER BY feature_id, document_type;
+
 -- name: UpsertFeatureDocument :one
 INSERT INTO workspace_feature_documents (
     workspace_id, feature_id, document_type, source_path, url, created_at, updated_at

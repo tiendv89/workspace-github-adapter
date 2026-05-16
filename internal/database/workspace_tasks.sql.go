@@ -111,15 +111,16 @@ SELECT id, workspace_id, feature_id, task_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
-WHERE workspace_id = $1 AND task_id = $2`
+WHERE workspace_id = $1 AND feature_id = $2 AND task_id = $3`
 
 type GetWorkspaceTaskParams struct {
 	WorkspaceID pgtype.UUID
+	FeatureID   string
 	TaskID      string
 }
 
 func (q *Queries) GetWorkspaceTask(ctx context.Context, arg GetWorkspaceTaskParams) (WorkspaceTask, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceTask, arg.WorkspaceID, arg.TaskID)
+	row := q.db.QueryRow(ctx, getWorkspaceTask, arg.WorkspaceID, arg.FeatureID, arg.TaskID)
 	var i WorkspaceTask
 	err := row.Scan(
 		&i.ID,

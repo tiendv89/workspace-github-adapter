@@ -161,7 +161,7 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 	}
 
 	// GetTask.
-	task, err := adapter.GetTask(ctx, workspaceID, "T1")
+	task, err := adapter.GetTask(ctx, workspaceID, "my-feature", "T1")
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}

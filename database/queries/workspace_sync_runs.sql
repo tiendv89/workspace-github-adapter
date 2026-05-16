@@ -33,3 +33,9 @@ FROM workspace_sync_runs
 WHERE workspace_id = $1
 ORDER BY started_at DESC
 LIMIT 1;
+
+-- name: ListLatestSyncRunsPerWorkspace :many
+SELECT DISTINCT ON (workspace_id) id, workspace_id, trigger, branch, feature_id, task_id, mode, status,
+       commit_sha, changed_paths, started_at, finished_at, error_code, error_message, metadata
+FROM workspace_sync_runs
+ORDER BY workspace_id, started_at DESC;
