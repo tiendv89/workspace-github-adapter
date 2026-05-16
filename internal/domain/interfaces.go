@@ -33,8 +33,8 @@ type DbWorkspaceAdapter interface {
 	// GetFeature returns the full feature detail for the given workspace and feature IDs.
 	GetFeature(ctx context.Context, workspaceID, featureID string) (*FeatureDetail, error)
 
-	// GetTask returns the full task detail for the given workspace and task IDs.
-	GetTask(ctx context.Context, workspaceID, taskID string) (*TaskDetail, error)
+	// GetTask returns the full task detail for the given workspace, feature, and task IDs.
+	GetTask(ctx context.Context, workspaceID, featureID, taskID string) (*TaskDetail, error)
 
 	// ListFeatureTasks returns task summaries for all tasks in the given feature.
 	ListFeatureTasks(ctx context.Context, workspaceID, featureID string) ([]TaskSummary, error)

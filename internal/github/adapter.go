@@ -159,15 +159,16 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 	}
 
 	return &domain.WorkspaceSnapshot{
-		WorkspaceID:  workspaceID,
-		Name:         name,
-		Slug:         slug,
-		RepoURL:      "https://github.com/" + owner + "/" + repo,
-		CommitSHA:    commitSHA,
-		FetchedAt:    fetchedAt,
-		Features:     features,
-		Repos:        repos,
-		SourceErrors: sourceErrors,
+		WorkspaceID:      workspaceID,
+		Name:             name,
+		Slug:             slug,
+		RepoURL:          "https://github.com/" + owner + "/" + repo,
+		ManagementRepoID: wsCfg.ManagementRepo,
+		CommitSHA:        commitSHA,
+		FetchedAt:        fetchedAt,
+		Features:         features,
+		Repos:            repos,
+		SourceErrors:     sourceErrors,
 	}, nil
 }
 

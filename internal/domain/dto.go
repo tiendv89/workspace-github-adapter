@@ -131,15 +131,16 @@ type BlockedContext struct {
 // WorkspaceSnapshot is the parsed in-memory representation of a GitHub workspace
 // returned by GitHubWorkspaceAdapter. It is the input to the DB persistence layer.
 type WorkspaceSnapshot struct {
-	WorkspaceID  string
-	Name         string
-	Slug         string
-	RepoURL      string
-	CommitSHA    string
-	FetchedAt    time.Time
-	Features     []FeatureSnapshot
-	Repos        []RepoEntry
-	SourceErrors []SourceError
+	WorkspaceID      string
+	Name             string
+	Slug             string
+	RepoURL          string
+	ManagementRepoID string
+	CommitSHA        string
+	FetchedAt        time.Time
+	Features         []FeatureSnapshot
+	Repos            []RepoEntry
+	SourceErrors     []SourceError
 }
 
 // RepoEntry maps to workspace.yaml repos[].
