@@ -21,6 +21,10 @@ type Config struct {
 	// GitHub
 	GitHubToken string
 
+	// WebhookSecret is the shared secret used to verify GitHub webhook HMAC signatures.
+	// Set via GITHUB_WEBHOOK_SECRET environment variable.
+	WebhookSecret string
+
 	// Sync staleness threshold
 	StaleThreshold time.Duration
 }
@@ -56,6 +60,7 @@ func Load() (*Config, error) {
 		DatabaseURL:    dbURL,
 		RedisURL:       os.Getenv("REDIS_URL"),
 		GitHubToken:    os.Getenv("GITHUB_TOKEN"),
+		WebhookSecret:  os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		StaleThreshold: staleThreshold,
 	}, nil
 }

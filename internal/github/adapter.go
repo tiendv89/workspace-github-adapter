@@ -59,6 +59,80 @@ func (a *Adapter) ImportWorkspace(ctx context.Context, input domain.ImportInput)
 	return a.fetchSnapshot(ctx, c, owner, repo, ref, "")
 }
 
+// FetchFeature fetches and parses all artifacts for a single feature from the given ref.
+// It builds a path set for the feature's tasks directory to discover all task YAMLs.
+func (a *Adapter) FetchFeature(ctx context.Context, repoURL, ref, featureID string) (*domain.FeatureSnapshot, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return nil, *err
+	}
+	c := newClient(a.token)
+
+	// Resolve commit SHA.
+	commitSHA, ferr := c.getCommitSHA(ctx, owner, repo, ref)
+	if ferr != nil {
+		return nil, mapFetchError(ferr, owner, repo)
+	}
+
+	// Get the full tree to discover task YAMLs for this feature.
+	tree, ferr := c.getTree(ctx, owner, repo, commitSHA)
+	if ferr != nil {
+		return nil, mapFetchError(ferr, owner, repo)
+	}
+
+	pathSet := make(map[string]struct{}, len(tree.Tree))
+	for _, e := range tree.Tree {
+		if e.Type == "blob" {
+			pathSet[e.Path] = struct{}{}
+		}
+	}
+
+	snap, errs := a.fetchFeature(ctx, c, owner, repo, ref, featureID, pathSet)
+	if len(errs) > 0 {
+		// Return the first hard error if snap is nil.
+		if snap == nil {
+			return nil, errs[0]
+		}
+		// Soft errors (e.g. optional files missing) are ignored for targeted sync.
+	}
+	if snap == nil {
+		return nil, domain.NewGitHubNotFoundError("https://github.com/" + owner + "/" + repo)
+	}
+	return snap, nil
+}
+
+// FetchTask fetches and parses a single task YAML from the given task branch.
+func (a *Adapter) FetchTask(ctx context.Context, repoURL, taskBranch, featureID, taskID string) (*domain.TaskSnapshot, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return nil, *err
+	}
+	c := newClient(a.token)
+
+	taskPath := "docs/features/" + featureID + "/tasks/" + taskID + ".yaml"
+	data, ferr := c.getFileContent(ctx, owner, repo, taskPath, taskBranch)
+	if ferr != nil {
+		return nil, ferr
+	}
+	if data == nil {
+		return nil, domain.SourceError{
+			Code:      domain.ErrGitHubNotFound,
+			Message:   "task file not found: " + taskPath,
+			Source:    domain.ErrorSourceGitHub,
+			Retryable: false,
+			Path:      taskPath,
+		}
+	}
+
+	parsed, parseErr := parseTaskYAML(data, taskPath)
+	if parseErr != nil {
+		return nil, *parseErr
+	}
+
+	snap := mapTaskSnapshot(parsed, featureID, taskID, taskPath, data)
+	return &snap, nil
+}
+
 // SyncWorkspace re-fetches the repository at the given ref and returns an updated snapshot.
 func (a *Adapter) SyncWorkspace(ctx context.Context, workspaceID, repoURL, ref string) (*domain.WorkspaceSnapshot, error) {
 	if repoURL == "" {

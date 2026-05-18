@@ -19,6 +19,14 @@ type GitHubWorkspaceAdapter interface {
 	// SyncWorkspace re-fetches the repository at the given ref (branch or SHA)
 	// and returns an updated WorkspaceSnapshot.
 	SyncWorkspace(ctx context.Context, workspaceID, repoURL, ref string) (*WorkspaceSnapshot, error)
+
+	// FetchFeature fetches and parses all artifacts for a single feature.
+	// Used for targeted sync triggered by webhook events on feature branches or base-branch pushes.
+	FetchFeature(ctx context.Context, repoURL, ref, featureID string) (*FeatureSnapshot, error)
+
+	// FetchTask fetches and parses a single task YAML from the given task branch.
+	// Used by the task:sync worker to read current task state at execution time.
+	FetchTask(ctx context.Context, repoURL, taskBranch, featureID, taskID string) (*TaskSnapshot, error)
 }
 
 // DbWorkspaceAdapter reads and writes workspace data in PostgreSQL.
@@ -44,6 +52,14 @@ type DbWorkspaceAdapter interface {
 
 	// SaveSnapshot upserts all core tables from the given snapshot inside a single transaction.
 	SaveSnapshot(ctx context.Context, workspaceID string, snapshot *WorkspaceSnapshot) error
+
+	// SaveFeatureSnapshot upserts a single feature's rows (features, documents, tasks, activity)
+	// inside a single transaction. Used for targeted sync from webhook events.
+	SaveFeatureSnapshot(ctx context.Context, workspaceID string, snap FeatureSnapshot) error
+
+	// SaveTaskSnapshot upserts a single task's rows (workspace_tasks, activity events)
+	// inside a single transaction. Used by the task:sync queue worker.
+	SaveTaskSnapshot(ctx context.Context, workspaceID string, snap TaskSnapshot) error
 
 	// GetActiveSnapshot returns the latest WorkspaceSnapshot for the given workspace.
 	// Returns nil, nil when no snapshot has been saved yet.

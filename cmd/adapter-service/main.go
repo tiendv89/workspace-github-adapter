@@ -27,14 +27,16 @@ import (
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 	ghadapter "github.com/tiendv89/workspace-github-adapter/internal/github"
 	"github.com/tiendv89/workspace-github-adapter/internal/queue"
+	"github.com/tiendv89/workspace-github-adapter/internal/webhook"
 )
 
 type serviceHandler struct {
-	db     domain.DbWorkspaceAdapter
-	q      *database.Queries
-	github domain.GitHubWorkspaceAdapter
-	token  string
-	queue  *asynq.Client
+	db            domain.DbWorkspaceAdapter
+	q             *database.Queries
+	github        domain.GitHubWorkspaceAdapter
+	token         string
+	queue         *asynq.Client
+	webhookSecret string
 }
 
 type importWorkspaceRequest struct {
@@ -77,11 +79,12 @@ func main() {
 	}
 
 	h := &serviceHandler{
-		db:     dbadapter.New(pool),
-		q:      database.New(pool),
-		github: ghadapter.New(cfg.GitHubToken),
-		token:  cfg.GitHubToken,
-		queue:  client,
+		db:            dbadapter.New(pool),
+		q:             database.New(pool),
+		github:        ghadapter.New(cfg.GitHubToken),
+		token:         cfg.GitHubToken,
+		queue:         client,
+		webhookSecret: cfg.WebhookSecret,
 	}
 
 	mux := http.NewServeMux()
@@ -91,6 +94,7 @@ func main() {
 	})
 	mux.HandleFunc("/internal/workspaces/import", h.importWorkspaceHandler)
 	mux.HandleFunc("/internal/workspaces/", h.internalWorkspaceHandler)
+	mux.HandleFunc("/webhook", h.webhookHandler)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -260,6 +264,175 @@ func (h *serviceHandler) internalWorkspaceHandler(w http.ResponseWriter, r *http
 		"queue":   info.Queue,
 		"type":    info.Type,
 	})
+}
+
+// webhookHandler processes GitHub push event webhooks.
+// It verifies the HMAC signature, parses the push payload, and routes based on branch:
+//   - base branch → enqueue targeted workspace:sync for each touched feature
+//   - feature branch → enqueue targeted workspace:sync for that feature
+//   - task branch → enqueue task:sync with dedup
+//   - other → 200 OK, ignored
+func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := webhook.ReadAndVerify(r, h.webhookSecret)
+	if err != nil {
+		http.Error(w, "signature verification failed: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	// Only handle push events; ignore other event types gracefully.
+	eventType := r.Header.Get("X-GitHub-Event")
+	if eventType != "push" {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored", "event": eventType})
+		return
+	}
+
+	ev, err := webhook.ParsePushEvent(body)
+	if err != nil {
+		http.Error(w, "invalid push event payload", http.StatusBadRequest)
+		return
+	}
+
+	branch := webhook.BranchFromRef(ev.Ref)
+
+	// Look up the workspace by repo URL to find workspaceID, defaultBranch, and branchPattern.
+	repoURL := ev.Repository.CloneURL
+	if repoURL == "" {
+		repoURL = ev.Repository.HTMLURL
+	}
+	wsInfo, dbErr := h.findWorkspaceByRepoURL(r.Context(), repoURL)
+	if dbErr != nil {
+		// Unknown repo — not an error from our side, just ignore.
+		log.Printf("webhook: repo not registered: %s", repoURL)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "repo not registered"})
+		return
+	}
+
+	info := webhook.ClassifyBranch(branch, wsInfo.defaultBranch)
+	switch info.Kind {
+	case webhook.BranchIgnored:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored", "branch": branch})
+		return
+
+	case webhook.BranchBase:
+		featureIDs := webhook.TouchedFeatureIDs(ev)
+		for _, fid := range featureIDs {
+			go h.enqueueTargetedSync(wsInfo, fid, branch)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":           "queued",
+			"branch_kind":      "base",
+			"features_touched": fmt.Sprintf("%d", len(featureIDs)),
+		})
+
+	case webhook.BranchFeature:
+		go h.enqueueTargetedSync(wsInfo, info.FeatureID, branch)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":     "queued",
+			"branch_kind": "feature",
+			"feature_id": info.FeatureID,
+		})
+
+	case webhook.BranchTask:
+		if err := h.enqueueTaskSync(wsInfo.workspaceID, info.FeatureID, info.TaskID); err != nil {
+			log.Printf("webhook: enqueue task sync failed workspace=%s feature=%s task=%s: %v",
+				wsInfo.workspaceID, info.FeatureID, info.TaskID, err)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":     "queued",
+			"branch_kind": "task",
+			"feature_id": info.FeatureID,
+			"task_id":    info.TaskID,
+		})
+	}
+}
+
+// workspaceWebhookInfo holds the minimal workspace data needed by webhook routing.
+type workspaceWebhookInfo struct {
+	workspaceID   string
+	repoURL       string
+	defaultBranch string
+}
+
+// findWorkspaceByRepoURL queries the DB for a workspace matching the given repo URL.
+func (h *serviceHandler) findWorkspaceByRepoURL(ctx context.Context, repoURL string) (*workspaceWebhookInfo, error) {
+	owner, repo, err := parseGitHubRepo(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	src, dbError := h.q.GetGitHubSourceByRepo(ctx, database.GetGitHubSourceByRepoParams{
+		RepoOwner: owner,
+		RepoName:  repo,
+	})
+	if dbError != nil {
+		return nil, dbError
+	}
+	defaultBranch := "main"
+	if src.DefaultBranch != nil && *src.DefaultBranch != "" {
+		defaultBranch = *src.DefaultBranch
+	}
+	return &workspaceWebhookInfo{
+		workspaceID:   uuidString(src.WorkspaceID),
+		repoURL:       src.RepoURL,
+		defaultBranch: defaultBranch,
+	}, nil
+}
+
+// enqueueTargetedSync enqueues a workspace:sync task with mode=targeted for a single feature.
+// It runs in a goroutine so the webhook handler returns immediately.
+func (h *serviceHandler) enqueueTargetedSync(ws *workspaceWebhookInfo, featureID, branch string) {
+	payload := queue.WorkspaceSyncPayload{
+		WorkspaceID:   ws.workspaceID,
+		RepoURL:       ws.repoURL,
+		DefaultBranch: ws.defaultBranch,
+		Ref:           branch,
+		Trigger:       "webhook_feature",
+		Mode:          "targeted",
+		FeatureID:     featureID,
+	}
+	task, err := queue.NewWorkspaceSyncTask(payload)
+	if err != nil {
+		log.Printf("enqueueTargetedSync: build task error: %v", err)
+		return
+	}
+	if _, err := h.queue.Enqueue(task); err != nil {
+		log.Printf("enqueueTargetedSync: enqueue error workspace=%s feature=%s: %v",
+			ws.workspaceID, featureID, err)
+	}
+}
+
+// enqueueTaskSync enqueues a task:sync job with deduplication.
+func (h *serviceHandler) enqueueTaskSync(workspaceID, featureID, taskID string) error {
+	payload := queue.TaskSyncPayload{
+		WorkspaceID: workspaceID,
+		FeatureID:   featureID,
+		TaskID:      taskID,
+	}
+	task, err := queue.NewTaskSyncTask(payload)
+	if err != nil {
+		return fmt.Errorf("build task:sync task: %w", err)
+	}
+	info, err := h.queue.Enqueue(task)
+	if err != nil {
+		// ErrTaskIDConflict means duplicate — already queued, this is expected with Unique(24h).
+		if isDedupeError(err) {
+			log.Printf("task:sync already queued (dedup) workspace=%s feature=%s task=%s", workspaceID, featureID, taskID)
+			return nil
+		}
+		return fmt.Errorf("enqueue task:sync: %w", err)
+	}
+	log.Printf("task:sync enqueued id=%s workspace=%s feature=%s task=%s", info.ID, workspaceID, featureID, taskID)
+	return nil
+}
+
+// isDedupeError returns true when the asynq error indicates a duplicate task (Unique constraint).
+func isDedupeError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "task already exists")
 }
 
 func (h *serviceHandler) createImportPlaceholder(ctx context.Context, workspaceID, name, slug, repoURL, defaultBranch string) (string, error) {
