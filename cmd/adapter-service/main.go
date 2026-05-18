@@ -62,6 +62,10 @@ func main() {
 		log.Printf("WARNING: GITHUB_WEBHOOK_SECRET is not set — webhook signature verification is DISABLED")
 	}
 
+	if cfg.WebhookSecret == "" {
+		log.Printf("WARNING: GITHUB_WEBHOOK_SECRET is not set — webhook signature verification is DISABLED")
+	}
+
 	redisOpt, err := queue.RedisOpt(cfg.RedisURL)
 	if err != nil {
 		log.Fatalf("redis: %v", err)
