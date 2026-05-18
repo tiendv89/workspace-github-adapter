@@ -54,6 +54,7 @@ type WorkspaceDetail struct {
 
 // FeatureSummary is the list-view representation of a feature.
 type FeatureSummary struct {
+	ID           string     `json:"id"`
 	FeatureID    string     `json:"feature_id"`
 	Title        string     `json:"title"`
 	Status       string     `json:"status"`
@@ -91,8 +92,10 @@ type FeatureDetail struct {
 
 // TaskSummary is the list-view representation of a task.
 type TaskSummary struct {
+	ID            string `json:"id"`
 	TaskID        string `json:"task_id"`
 	FeatureID     string `json:"feature_id"`
+	FeatureName   string `json:"feature_name"`
 	Title         string `json:"title"`
 	Status        string `json:"status"`
 	Repo          string `json:"repo,omitempty"`

@@ -95,7 +95,7 @@ func TestRowToTaskSummary(t *testing.T) {
 
 	row := database.WorkspaceTask{
 		TaskID:        "T1",
-		FeatureID:     "my-feature",
+		FeatureName:   "my-feature",
 		Title:         "Test Task",
 		Status:        &status,
 		Repo:          &repo,
@@ -103,6 +103,8 @@ func TestRowToTaskSummary(t *testing.T) {
 		BlockedReason: &blocked,
 		DependsOn:     json.RawMessage(`["T0"]`),
 	}
+	_ = row.ID.Scan("550e8400-e29b-41d4-a716-446655440010")
+	_ = row.FeatureID.Scan("550e8400-e29b-41d4-a716-446655440020")
 
 	got := db.ExportedRowToTaskSummary(row)
 
@@ -124,11 +126,11 @@ func TestRowToTaskSummary(t *testing.T) {
 func TestRowToTaskSummary_NoBlocked(t *testing.T) {
 	status := "ready"
 	row := database.WorkspaceTask{
-		TaskID:    "T2",
-		FeatureID: "feat",
-		Title:     "Ready Task",
-		Status:    &status,
-		DependsOn: json.RawMessage(`[]`),
+		TaskID:      "T2",
+		FeatureName: "feat",
+		Title:       "Ready Task",
+		Status:      &status,
+		DependsOn:   json.RawMessage(`[]`),
 	}
 	got := db.ExportedRowToTaskSummary(row)
 	if got.IsBlocked {
@@ -142,13 +144,11 @@ func TestRowToActivityEvent(t *testing.T) {
 	action := "claimed"
 	actor := "norepy@tiendv.dev"
 	note := "executor work phase begun"
-	fid := "my-feature"
-	tid := "T3"
+	fid := "550e8400-e29b-41d4-a716-446655440020"
+	tid := "550e8400-e29b-41d4-a716-446655440030"
 
 	row := database.WorkspaceActivityEvent{
 		ScopeType:  "task",
-		FeatureID:  &fid,
-		TaskID:     &tid,
 		Action:     &action,
 		Actor:      &actor,
 		OccurredAt: &ts,
@@ -156,6 +156,8 @@ func TestRowToActivityEvent(t *testing.T) {
 		Sequence:   0,
 		RawEvent:   json.RawMessage(`{}`),
 	}
+	_ = row.FeatureID.Scan(fid)
+	_ = row.TaskID.Scan(tid)
 
 	got := db.ExportedRowToActivityEvent(row)
 
@@ -267,10 +269,10 @@ func TestRowToFeatureSummary(t *testing.T) {
 	blocked := "blocked"
 
 	tasks := []database.WorkspaceTask{
-		{FeatureID: "feat-1", Status: &inProgress},
-		{FeatureID: "feat-1", Status: &done},
-		{FeatureID: "feat-1", Status: &blocked},
-		{FeatureID: "other-feat", Status: &done}, // should be excluded
+		{FeatureName: "feat-1", Status: &inProgress},
+		{FeatureName: "feat-1", Status: &done},
+		{FeatureName: "feat-1", Status: &blocked},
+		{FeatureName: "other-feat", Status: &done}, // should be excluded
 	}
 
 	got := db.ExportedRowToFeatureSummary(feat, tasks)

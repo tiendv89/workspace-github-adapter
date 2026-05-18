@@ -367,14 +367,14 @@ func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*d
 		return nil, dbErr("list tasks for snapshot", err)
 	}
 
-	// Group by feature_id for O(1) lookup inside buildFeatureSnapshotFromBatch.
+	// Group by feature_name (the legacy slug) for O(1) lookup inside buildFeatureSnapshotFromBatch.
 	docsByFeature := make(map[string][]database.WorkspaceFeatureDocument, len(features))
 	for _, d := range allDocs {
-		docsByFeature[d.FeatureID] = append(docsByFeature[d.FeatureID], d)
+		docsByFeature[d.FeatureName] = append(docsByFeature[d.FeatureName], d)
 	}
 	tasksByFeature := make(map[string][]database.WorkspaceTask, len(features))
 	for _, t := range allTasks {
-		tasksByFeature[t.FeatureID] = append(tasksByFeature[t.FeatureID], t)
+		tasksByFeature[t.FeatureName] = append(tasksByFeature[t.FeatureName], t)
 	}
 
 	featureSnapshots := make([]domain.FeatureSnapshot, 0, len(features))
@@ -483,7 +483,7 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, s
 
 func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, f domain.FeatureSnapshot) error {
 	stages, _ := json.Marshal(nil) //nolint:errcheck
-	_, err := q.UpsertWorkspaceFeature(ctx, database.UpsertWorkspaceFeatureParams{
+	featureRow, err := q.UpsertWorkspaceFeature(ctx, database.UpsertWorkspaceFeatureParams{
 		WorkspaceID:   uid,
 		FeatureID:     f.FeatureID,
 		Title:         f.Title,
@@ -503,7 +503,8 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 	for _, d := range f.Documents {
 		_, err := q.UpsertFeatureDocument(ctx, database.UpsertFeatureDocumentParams{
 			WorkspaceID:  uid,
-			FeatureID:    f.FeatureID,
+			FeatureID:    featureRow.ID,
+			FeatureName:  f.FeatureID,
 			DocumentType: d.DocumentType,
 			SourcePath:   d.SourcePath,
 			URL:          ptrStr(d.URL),
@@ -515,7 +516,7 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 	}
 	if err := q.DeleteFeatureDocumentsNotIn(ctx, database.DeleteFeatureDocumentsNotInParams{
 		WorkspaceID:   uid,
-		FeatureID:     f.FeatureID,
+		FeatureID:     uuidStr(featureRow.ID),
 		DocumentTypes: docTypes,
 	}); err != nil {
 		return fmt.Errorf("delete stale documents for %s: %w", f.FeatureID, err)
@@ -524,36 +525,37 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 	// Upsert tasks.
 	taskIDs := make([]string, 0, len(f.Tasks))
 	for _, t := range f.Tasks {
-		if err := upsertTaskSnapshot(ctx, q, uid, f.FeatureID, t); err != nil {
+		if err := upsertTaskSnapshot(ctx, q, uid, featureRow.ID, f.FeatureID, t); err != nil {
 			return err
 		}
 		taskIDs = append(taskIDs, t.TaskID)
 	}
 	if err := q.DeleteFeatureTasksNotIn(ctx, database.DeleteFeatureTasksNotInParams{
 		WorkspaceID: uid,
-		FeatureID:   f.FeatureID,
+		FeatureID:   uuidStr(featureRow.ID),
 		TaskIds:     taskIDs,
 	}); err != nil {
 		return fmt.Errorf("delete stale tasks for %s: %w", f.FeatureID, err)
 	}
 
 	// Upsert feature-level activity (task_id = nil).
-	if err := upsertFeatureActivity(ctx, q, uid, f); err != nil {
+	if err := upsertFeatureActivity(ctx, q, uid, featureRow.ID, f); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureID string, t domain.TaskSnapshot) error {
+func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureUUID pgtype.UUID, featureName string, t domain.TaskSnapshot) error {
 	dependsOn, _ := json.Marshal(t.DependsOn) //nolint:errcheck
 	execution, _ := json.Marshal(t.Execution) //nolint:errcheck
 	pr, _ := json.Marshal(t.PR)               //nolint:errcheck
 	wsPr, _ := json.Marshal(t.WorkspacePR)    //nolint:errcheck
 
-	_, err := q.UpsertWorkspaceTask(ctx, database.UpsertWorkspaceTaskParams{
+	taskRow, err := q.UpsertWorkspaceTask(ctx, database.UpsertWorkspaceTaskParams{
 		WorkspaceID:   uid,
-		FeatureID:     featureID,
+		FeatureID:     featureUUID,
+		FeatureName:   featureName,
 		TaskID:        t.TaskID,
 		Title:         t.Title,
 		Repo:          ptrStr(t.Repo),
@@ -568,11 +570,11 @@ func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUI
 		SourceHash:    ptrStr(t.SourceHash),
 	})
 	if err != nil {
-		return fmt.Errorf("upsert task %s/%s: %w", featureID, t.TaskID, err)
+		return fmt.Errorf("upsert task %s/%s: %w", featureName, t.TaskID, err)
 	}
 
 	// Upsert task-level activity from the task log.
-	if err := upsertTaskActivity(ctx, q, uid, featureID, t); err != nil {
+	if err := upsertTaskActivity(ctx, q, uid, featureUUID, featureName, taskRow.ID, t); err != nil {
 		return err
 	}
 
@@ -581,13 +583,14 @@ func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUI
 
 // upsertFeatureActivity normalizes feature-level activity events (scope_type=feature, task_id=NULL).
 // Uses the partial unique index on (workspace_id, feature_id, sequence) WHERE task_id IS NULL.
-func upsertFeatureActivity(ctx context.Context, q *database.Queries, uid pgtype.UUID, f domain.FeatureSnapshot) error {
+func upsertFeatureActivity(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureUUID pgtype.UUID, f domain.FeatureSnapshot) error {
 	for i, evt := range f.Activity {
 		raw, _ := json.Marshal(evt) //nolint:errcheck
 		_, err := q.UpsertFeatureActivityEvent(ctx, database.UpsertFeatureActivityEventParams{
 			WorkspaceID: uid,
 			ScopeType:   "feature",
-			FeatureID:   f.FeatureID,
+			FeatureID:   featureUUID,
+			FeatureName: f.FeatureID,
 			Action:      ptrStr(evt.Action),
 			Actor:       ptrStr(evt.Actor),
 			OccurredAt:  ptrStr(evt.OccurredAt.Format(time.RFC3339)),
@@ -604,14 +607,16 @@ func upsertFeatureActivity(ctx context.Context, q *database.Queries, uid pgtype.
 
 // upsertTaskActivity normalizes task log entries (scope_type=task).
 // Uses the partial unique index on (workspace_id, feature_id, task_id, sequence) WHERE task_id IS NOT NULL.
-func upsertTaskActivity(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureID string, t domain.TaskSnapshot) error {
+func upsertTaskActivity(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureUUID pgtype.UUID, featureName string, taskUUID pgtype.UUID, t domain.TaskSnapshot) error {
 	for i, evt := range t.Activity {
 		raw, _ := json.Marshal(evt) //nolint:errcheck
 		_, err := q.UpsertTaskActivityEvent(ctx, database.UpsertTaskActivityEventParams{
 			WorkspaceID: uid,
 			ScopeType:   "task",
-			FeatureID:   featureID,
-			TaskID:      t.TaskID,
+			FeatureID:   featureUUID,
+			FeatureName: featureName,
+			TaskID:      taskUUID,
+			TaskName:    t.TaskID,
 			Action:      ptrStr(evt.Action),
 			Actor:       ptrStr(evt.Actor),
 			OccurredAt:  ptrStr(evt.OccurredAt.Format(time.RFC3339)),
@@ -620,7 +625,7 @@ func upsertTaskActivity(ctx context.Context, q *database.Queries, uid pgtype.UUI
 			RawEvent:    raw,
 		})
 		if err != nil {
-			return fmt.Errorf("upsert task activity %s/%s[%d]: %w", featureID, t.TaskID, i, err)
+			return fmt.Errorf("upsert task activity %s/%s[%d]: %w", featureName, t.TaskID, i, err)
 		}
 	}
 	return nil
@@ -672,7 +677,7 @@ func buildFeatureSnapshotFromBatch(f database.WorkspaceFeature, docs []database.
 func rowToTaskSnapshot(t database.WorkspaceTask) domain.TaskSnapshot {
 	ts := domain.TaskSnapshot{
 		TaskID:     t.TaskID,
-		FeatureID:  t.FeatureID,
+		FeatureID:  t.FeatureName,
 		Title:      t.Title,
 		SourcePath: t.SourcePath,
 	}
@@ -714,7 +719,7 @@ func rowToTaskSnapshot(t database.WorkspaceTask) domain.TaskSnapshot {
 func rowToFeatureSummary(f database.WorkspaceFeature, tasks []database.WorkspaceTask) domain.FeatureSummary {
 	counts := domain.TaskCounts{}
 	for _, t := range tasks {
-		if t.FeatureID != f.FeatureID {
+		if t.FeatureName != f.FeatureID {
 			continue
 		}
 		counts.Total++
@@ -736,6 +741,7 @@ func rowToFeatureSummary(f database.WorkspaceFeature, tasks []database.Workspace
 	}
 
 	fs := domain.FeatureSummary{
+		ID:         uuidStr(f.ID),
 		FeatureID:  f.FeatureID,
 		Title:      f.Title,
 		UpdatedAt:  f.UpdatedAt.Time,
@@ -753,9 +759,11 @@ func rowToFeatureSummary(f database.WorkspaceFeature, tasks []database.Workspace
 // rowToTaskSummary converts a workspace_tasks row to domain.TaskSummary.
 func rowToTaskSummary(t database.WorkspaceTask) domain.TaskSummary {
 	ts := domain.TaskSummary{
-		TaskID:    t.TaskID,
-		FeatureID: t.FeatureID,
-		Title:     t.Title,
+		ID:          uuidStr(t.ID),
+		TaskID:      t.TaskID,
+		FeatureID:   uuidStr(t.FeatureID),
+		FeatureName: t.FeatureName,
+		Title:       t.Title,
 	}
 	if t.Status != nil {
 		ts.Status = *t.Status
@@ -787,11 +795,11 @@ func rowToActivityEvent(r database.WorkspaceActivityEvent) domain.ActivityEvent 
 	if r.Note != nil {
 		evt.Note = *r.Note
 	}
-	if r.FeatureID != nil {
-		evt.FeatureID = *r.FeatureID
+	if r.FeatureID.Valid {
+		evt.FeatureID = uuidStr(r.FeatureID)
 	}
-	if r.TaskID != nil {
-		evt.TaskID = *r.TaskID
+	if r.TaskID.Valid {
+		evt.TaskID = uuidStr(r.TaskID)
 	}
 	if r.OccurredAt != nil {
 		if t, err := time.Parse(time.RFC3339, *r.OccurredAt); err == nil {

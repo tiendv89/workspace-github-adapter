@@ -142,8 +142,10 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 		t.Errorf("expected 1 task, got %d", len(ws.Tasks))
 	}
 
+	featureUUID := ws.Features[0].ID
+
 	// GetFeature.
-	feat, err := adapter.GetFeature(ctx, workspaceID, "my-feature")
+	feat, err := adapter.GetFeature(ctx, workspaceID, featureUUID)
 	if err != nil {
 		t.Fatalf("GetFeature: %v", err)
 	}
@@ -160,8 +162,10 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 		t.Error("expected feature activity events")
 	}
 
+	taskUUID := feat.Tasks[0].ID
+
 	// GetTask.
-	task, err := adapter.GetTask(ctx, workspaceID, "my-feature", "T1")
+	task, err := adapter.GetTask(ctx, workspaceID, featureUUID, taskUUID)
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -173,7 +177,7 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 	}
 
 	// ListFeatureTasks.
-	tasks, err := adapter.ListFeatureTasks(ctx, workspaceID, "my-feature")
+	tasks, err := adapter.ListFeatureTasks(ctx, workspaceID, featureUUID)
 	if err != nil {
 		t.Fatalf("ListFeatureTasks: %v", err)
 	}

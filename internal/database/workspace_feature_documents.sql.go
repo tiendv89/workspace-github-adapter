@@ -9,9 +9,9 @@ import (
 )
 
 const listFeatureDocuments = `-- name: ListFeatureDocuments :many
-SELECT id, workspace_id, feature_id, document_type, source_path, url, created_at, updated_at
+SELECT id, workspace_id, feature_id, feature_name, document_type, source_path, url, created_at, updated_at
 FROM workspace_feature_documents
-WHERE workspace_id = $1 AND feature_id = $2
+WHERE workspace_id = $1 AND feature_id::text = $2
 ORDER BY document_type`
 
 type ListFeatureDocumentsParams struct {
@@ -32,6 +32,7 @@ func (q *Queries) ListFeatureDocuments(ctx context.Context, arg ListFeatureDocum
 			&i.ID,
 			&i.WorkspaceID,
 			&i.FeatureID,
+			&i.FeatureName,
 			&i.DocumentType,
 			&i.SourcePath,
 			&i.URL,
@@ -49,10 +50,10 @@ func (q *Queries) ListFeatureDocuments(ctx context.Context, arg ListFeatureDocum
 }
 
 const listWorkspaceFeatureDocuments = `-- name: ListWorkspaceFeatureDocuments :many
-SELECT id, workspace_id, feature_id, document_type, source_path, url, created_at, updated_at
+SELECT id, workspace_id, feature_id, feature_name, document_type, source_path, url, created_at, updated_at
 FROM workspace_feature_documents
 WHERE workspace_id = $1
-ORDER BY feature_id, document_type`
+ORDER BY feature_name, document_type`
 
 func (q *Queries) ListWorkspaceFeatureDocuments(ctx context.Context, workspaceID pgtype.UUID) ([]WorkspaceFeatureDocument, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceFeatureDocuments, workspaceID)
@@ -67,6 +68,7 @@ func (q *Queries) ListWorkspaceFeatureDocuments(ctx context.Context, workspaceID
 			&i.ID,
 			&i.WorkspaceID,
 			&i.FeatureID,
+			&i.FeatureName,
 			&i.DocumentType,
 			&i.SourcePath,
 			&i.URL,
@@ -85,18 +87,20 @@ func (q *Queries) ListWorkspaceFeatureDocuments(ctx context.Context, workspaceID
 
 const upsertFeatureDocument = `-- name: UpsertFeatureDocument :one
 INSERT INTO workspace_feature_documents (
-    workspace_id, feature_id, document_type, source_path, url, created_at, updated_at
+    workspace_id, feature_id, feature_name, document_type, source_path, url, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, now(), now())
+VALUES ($1, $2, $3, $4, $5, $6, now(), now())
 ON CONFLICT (workspace_id, feature_id, document_type) DO UPDATE SET
+    feature_name  = EXCLUDED.feature_name,
     source_path   = EXCLUDED.source_path,
     url           = EXCLUDED.url,
     updated_at    = now()
-RETURNING id, workspace_id, feature_id, document_type, source_path, url, created_at, updated_at`
+RETURNING id, workspace_id, feature_id, feature_name, document_type, source_path, url, created_at, updated_at`
 
 type UpsertFeatureDocumentParams struct {
 	WorkspaceID  pgtype.UUID
-	FeatureID    string
+	FeatureID    pgtype.UUID
+	FeatureName  string
 	DocumentType string
 	SourcePath   string
 	URL          *string
@@ -106,6 +110,7 @@ func (q *Queries) UpsertFeatureDocument(ctx context.Context, arg UpsertFeatureDo
 	row := q.db.QueryRow(ctx, upsertFeatureDocument,
 		arg.WorkspaceID,
 		arg.FeatureID,
+		arg.FeatureName,
 		arg.DocumentType,
 		arg.SourcePath,
 		arg.URL,
@@ -115,6 +120,7 @@ func (q *Queries) UpsertFeatureDocument(ctx context.Context, arg UpsertFeatureDo
 		&i.ID,
 		&i.WorkspaceID,
 		&i.FeatureID,
+		&i.FeatureName,
 		&i.DocumentType,
 		&i.SourcePath,
 		&i.URL,
@@ -127,7 +133,7 @@ func (q *Queries) UpsertFeatureDocument(ctx context.Context, arg UpsertFeatureDo
 const deleteFeatureDocumentsNotIn = `-- name: DeleteFeatureDocumentsNotIn :exec
 DELETE FROM workspace_feature_documents
 WHERE workspace_id = $1
-  AND feature_id   = $2
+  AND feature_id::text = $2
   AND document_type != ALL($3::text[])`
 
 type DeleteFeatureDocumentsNotInParams struct {
@@ -143,7 +149,7 @@ func (q *Queries) DeleteFeatureDocumentsNotIn(ctx context.Context, arg DeleteFea
 
 const deleteAllFeatureDocuments = `-- name: DeleteAllFeatureDocuments :exec
 DELETE FROM workspace_feature_documents
-WHERE workspace_id = $1 AND feature_id = $2`
+WHERE workspace_id = $1 AND feature_id::text = $2`
 
 type DeleteAllFeatureDocumentsParams struct {
 	WorkspaceID pgtype.UUID

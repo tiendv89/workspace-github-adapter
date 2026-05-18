@@ -18,6 +18,7 @@ func TestMigrationFilesExist(t *testing.T) {
 		"00006_workspace_activity_events.sql",
 		"00007_workspace_github_sources.sql",
 		"00008_workspace_sync_runs.sql",
+		"00009_use_uuid_feature_ids_for_tasks_documents_and_activity_events.sql",
 	}
 
 	for _, name := range expected {

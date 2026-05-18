@@ -45,7 +45,8 @@ type WorkspaceFeature struct {
 type WorkspaceFeatureDocument struct {
 	ID           pgtype.UUID        `db:"id" json:"id"`
 	WorkspaceID  pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
-	FeatureID    string             `db:"feature_id" json:"feature_id"`
+	FeatureID    pgtype.UUID        `db:"feature_id" json:"feature_id"`
+	FeatureName  string             `db:"feature_name" json:"feature_name"`
 	DocumentType string             `db:"document_type" json:"document_type"`
 	SourcePath   string             `db:"source_path" json:"source_path"`
 	URL          *string            `db:"url" json:"url"`
@@ -56,7 +57,8 @@ type WorkspaceFeatureDocument struct {
 type WorkspaceTask struct {
 	ID            pgtype.UUID        `db:"id" json:"id"`
 	WorkspaceID   pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
-	FeatureID     string             `db:"feature_id" json:"feature_id"`
+	FeatureID     pgtype.UUID        `db:"feature_id" json:"feature_id"`
+	FeatureName   string             `db:"feature_name" json:"feature_name"`
 	TaskID        string             `db:"task_id" json:"task_id"`
 	Title         string             `db:"title" json:"title"`
 	Repo          *string            `db:"repo" json:"repo"`
@@ -77,8 +79,8 @@ type WorkspaceActivityEvent struct {
 	ID          pgtype.UUID        `db:"id" json:"id"`
 	WorkspaceID pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
 	ScopeType   string             `db:"scope_type" json:"scope_type"`
-	FeatureID   *string            `db:"feature_id" json:"feature_id"`
-	TaskID      *string            `db:"task_id" json:"task_id"`
+	FeatureID   pgtype.UUID        `db:"feature_id" json:"feature_id"`
+	TaskID      pgtype.UUID        `db:"task_id" json:"task_id"`
 	Action      *string            `db:"action" json:"action"`
 	Actor       *string            `db:"actor" json:"actor"`
 	OccurredAt  *string            `db:"occurred_at" json:"occurred_at"`

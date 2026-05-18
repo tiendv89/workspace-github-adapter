@@ -10,11 +10,11 @@ import (
 )
 
 const listFeatureTasks = `-- name: ListFeatureTasks :many
-SELECT id, workspace_id, feature_id, task_id, title, repo, status, depends_on,
+SELECT id, workspace_id, feature_id, feature_name, task_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id = $2
+WHERE workspace_id = $1 AND feature_id::text = $2
 ORDER BY task_id`
 
 type ListFeatureTasksParams struct {
@@ -35,6 +35,7 @@ func (q *Queries) ListFeatureTasks(ctx context.Context, arg ListFeatureTasksPara
 			&i.ID,
 			&i.WorkspaceID,
 			&i.FeatureID,
+			&i.FeatureName,
 			&i.TaskID,
 			&i.Title,
 			&i.Repo,
@@ -61,12 +62,12 @@ func (q *Queries) ListFeatureTasks(ctx context.Context, arg ListFeatureTasksPara
 }
 
 const listWorkspaceTasks = `-- name: ListWorkspaceTasks :many
-SELECT id, workspace_id, feature_id, task_id, title, repo, status, depends_on,
+SELECT id, workspace_id, feature_id, feature_name, task_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
 WHERE workspace_id = $1
-ORDER BY feature_id, task_id`
+ORDER BY feature_name, task_id`
 
 func (q *Queries) ListWorkspaceTasks(ctx context.Context, workspaceID pgtype.UUID) ([]WorkspaceTask, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceTasks, workspaceID)
@@ -81,6 +82,7 @@ func (q *Queries) ListWorkspaceTasks(ctx context.Context, workspaceID pgtype.UUI
 			&i.ID,
 			&i.WorkspaceID,
 			&i.FeatureID,
+			&i.FeatureName,
 			&i.TaskID,
 			&i.Title,
 			&i.Repo,
@@ -107,11 +109,11 @@ func (q *Queries) ListWorkspaceTasks(ctx context.Context, workspaceID pgtype.UUI
 }
 
 const getWorkspaceTask = `-- name: GetWorkspaceTask :one
-SELECT id, workspace_id, feature_id, task_id, title, repo, status, depends_on,
+SELECT id, workspace_id, feature_id, feature_name, task_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id = $2 AND task_id = $3`
+WHERE workspace_id = $1 AND feature_id::text = $2 AND id::text = $3`
 
 type GetWorkspaceTaskParams struct {
 	WorkspaceID pgtype.UUID
@@ -126,6 +128,7 @@ func (q *Queries) GetWorkspaceTask(ctx context.Context, arg GetWorkspaceTaskPara
 		&i.ID,
 		&i.WorkspaceID,
 		&i.FeatureID,
+		&i.FeatureName,
 		&i.TaskID,
 		&i.Title,
 		&i.Repo,
@@ -146,12 +149,13 @@ func (q *Queries) GetWorkspaceTask(ctx context.Context, arg GetWorkspaceTaskPara
 
 const upsertWorkspaceTask = `-- name: UpsertWorkspaceTask :one
 INSERT INTO workspace_tasks (
-    workspace_id, feature_id, task_id, title, repo, status, depends_on,
+    workspace_id, feature_id, feature_name, task_id, title, repo, status, depends_on,
     blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
     created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now(), now())
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())
 ON CONFLICT (workspace_id, feature_id, task_id) DO UPDATE SET
+    feature_name   = EXCLUDED.feature_name,
     title          = EXCLUDED.title,
     repo           = EXCLUDED.repo,
     status         = EXCLUDED.status,
@@ -164,13 +168,14 @@ ON CONFLICT (workspace_id, feature_id, task_id) DO UPDATE SET
     source_path    = EXCLUDED.source_path,
     source_hash    = EXCLUDED.source_hash,
     updated_at     = now()
-RETURNING id, workspace_id, feature_id, task_id, title, repo, status, depends_on,
+RETURNING id, workspace_id, feature_id, feature_name, task_id, title, repo, status, depends_on,
           blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
           created_at, updated_at`
 
 type UpsertWorkspaceTaskParams struct {
 	WorkspaceID   pgtype.UUID
-	FeatureID     string
+	FeatureID     pgtype.UUID
+	FeatureName   string
 	TaskID        string
 	Title         string
 	Repo          *string
@@ -189,6 +194,7 @@ func (q *Queries) UpsertWorkspaceTask(ctx context.Context, arg UpsertWorkspaceTa
 	row := q.db.QueryRow(ctx, upsertWorkspaceTask,
 		arg.WorkspaceID,
 		arg.FeatureID,
+		arg.FeatureName,
 		arg.TaskID,
 		arg.Title,
 		arg.Repo,
@@ -207,6 +213,7 @@ func (q *Queries) UpsertWorkspaceTask(ctx context.Context, arg UpsertWorkspaceTa
 		&i.ID,
 		&i.WorkspaceID,
 		&i.FeatureID,
+		&i.FeatureName,
 		&i.TaskID,
 		&i.Title,
 		&i.Repo,
@@ -228,7 +235,7 @@ func (q *Queries) UpsertWorkspaceTask(ctx context.Context, arg UpsertWorkspaceTa
 const deleteFeatureTasksNotIn = `-- name: DeleteFeatureTasksNotIn :exec
 DELETE FROM workspace_tasks
 WHERE workspace_id = $1
-  AND feature_id   = $2
+  AND feature_id::text = $2
   AND task_id != ALL($3::text[])`
 
 type DeleteFeatureTasksNotInParams struct {
@@ -244,7 +251,7 @@ func (q *Queries) DeleteFeatureTasksNotIn(ctx context.Context, arg DeleteFeature
 
 const deleteAllFeatureTasks = `-- name: DeleteAllFeatureTasks :exec
 DELETE FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id = $2`
+WHERE workspace_id = $1 AND feature_id::text = $2`
 
 type DeleteAllFeatureTasksParams struct {
 	WorkspaceID pgtype.UUID
