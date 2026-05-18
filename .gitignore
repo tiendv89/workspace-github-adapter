@@ -2,6 +2,11 @@
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
 
 # Go build outputs
 bin/
@@ -14,6 +19,8 @@ dist/
 *.dylib
 *.test
 *.out
+coverage.out
+coverage.html
 
 # Go workspace / vendoring
 vendor/
@@ -32,7 +39,8 @@ Thumbs.db
 *.swp
 *.swo
 
-# Temporary files
+# Temporary files and caches
 tmp/
 temp/
 .cache/
+.coverage/
