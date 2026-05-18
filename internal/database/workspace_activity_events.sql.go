@@ -53,7 +53,7 @@ const listFeatureActivityEvents = `-- name: ListFeatureActivityEvents :many
 SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
        occurred_at, note, sequence, raw_event, created_at
 FROM workspace_activity_events
-WHERE workspace_id = $1 AND feature_id::text = $2
+WHERE workspace_id = $1 AND feature_name = $2
 ORDER BY occurred_at DESC, sequence DESC`
 
 type ListFeatureActivityEventsParams struct {
@@ -98,7 +98,7 @@ const listTaskActivityEvents = `-- name: ListTaskActivityEvents :many
 SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
        occurred_at, note, sequence, raw_event, created_at
 FROM workspace_activity_events
-WHERE workspace_id = $1 AND feature_id::text = $2 AND task_id::text = $3
+WHERE workspace_id = $1 AND feature_name = $2 AND task_name = $3
 ORDER BY sequence`
 
 type ListTaskActivityEventsParams struct {
@@ -277,11 +277,11 @@ func (q *Queries) UpsertTaskActivityEvent(ctx context.Context, arg UpsertTaskAct
 
 const deleteAllFeatureActivityEvents = `-- name: DeleteAllFeatureActivityEvents :exec
 DELETE FROM workspace_activity_events
-WHERE workspace_id = $1 AND feature_id::text = $2`
+WHERE workspace_id = $1 AND feature_id = $2`
 
 type DeleteAllFeatureActivityEventsParams struct {
 	WorkspaceID pgtype.UUID
-	FeatureID   string
+	FeatureID   pgtype.UUID
 }
 
 func (q *Queries) DeleteAllFeatureActivityEvents(ctx context.Context, arg DeleteAllFeatureActivityEventsParams) error {

@@ -483,8 +483,10 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, s
 	if mgmtRepoID == "" {
 		mgmtRepoID = "management-repo"
 	}
-	// Upsert workspace record (slug is the natural key).
-	_, err := q.UpsertWorkspace(ctx, database.UpsertWorkspaceParams{
+	// Sync updates the existing workspace by ID. Import placeholders may have been
+	// created with a different slug, so using slug as the conflict target can hit
+	// workspaces_pkey before PostgreSQL gets a chance to update the row.
+	_, err := q.UpsertWorkspaceByID(ctx, database.UpsertWorkspaceByIDParams{
 		ID:               uid,
 		Slug:             snap.Slug,
 		Name:             snap.Name,
@@ -568,7 +570,7 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 	}
 	if err := q.DeleteFeatureDocumentsNotIn(ctx, database.DeleteFeatureDocumentsNotInParams{
 		WorkspaceID:   uid,
-		FeatureID:     uuidStr(featureRow.ID),
+		FeatureID:     featureRow.ID,
 		DocumentTypes: docTypes,
 	}); err != nil {
 		return fmt.Errorf("delete stale documents for %s: %w", f.FeatureID, err)
@@ -584,7 +586,7 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 	}
 	if err := q.DeleteFeatureTasksNotIn(ctx, database.DeleteFeatureTasksNotInParams{
 		WorkspaceID: uid,
-		FeatureID:   uuidStr(featureRow.ID),
+		FeatureID:   featureRow.ID,
 		TaskIds:     taskIDs,
 	}); err != nil {
 		return fmt.Errorf("delete stale tasks for %s: %w", f.FeatureID, err)

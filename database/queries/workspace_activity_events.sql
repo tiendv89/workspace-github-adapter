@@ -9,14 +9,14 @@ ORDER BY occurred_at DESC, sequence DESC;
 SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
        occurred_at, note, sequence, raw_event, created_at
 FROM workspace_activity_events
-WHERE workspace_id = $1 AND feature_id::text = $2
+WHERE workspace_id = $1 AND feature_name = $2
 ORDER BY occurred_at DESC, sequence DESC;
 
 -- name: ListTaskActivityEvents :many
 SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
        occurred_at, note, sequence, raw_event, created_at
 FROM workspace_activity_events
-WHERE workspace_id = $1 AND feature_id::text = $2 AND task_id::text = $3
+WHERE workspace_id = $1 AND feature_name = $2 AND task_name = $3
 ORDER BY sequence;
 
 -- name: UpsertFeatureActivityEvent :one
@@ -62,4 +62,4 @@ RETURNING id, workspace_id, scope_type, feature_id, task_id, action, actor,
 
 -- name: DeleteAllFeatureActivityEvents :exec
 DELETE FROM workspace_activity_events
-WHERE workspace_id = $1 AND feature_id::text = $2;
+WHERE workspace_id = $1 AND feature_id = $2;

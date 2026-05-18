@@ -119,3 +119,43 @@ func (q *Queries) UpsertWorkspace(ctx context.Context, arg UpsertWorkspaceParams
 	)
 	return i, err
 }
+
+const upsertWorkspaceByID = `-- name: UpsertWorkspaceByID :one
+INSERT INTO workspaces (id, slug, name, management_repo_id, branch_pattern, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, now(), now())
+ON CONFLICT (id) DO UPDATE SET
+    slug               = EXCLUDED.slug,
+    name               = EXCLUDED.name,
+    management_repo_id = EXCLUDED.management_repo_id,
+    branch_pattern     = EXCLUDED.branch_pattern,
+    updated_at         = now()
+RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at`
+
+type UpsertWorkspaceByIDParams struct {
+	ID               pgtype.UUID
+	Slug             string
+	Name             string
+	ManagementRepoID string
+	BranchPattern    *string
+}
+
+func (q *Queries) UpsertWorkspaceByID(ctx context.Context, arg UpsertWorkspaceByIDParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, upsertWorkspaceByID,
+		arg.ID,
+		arg.Slug,
+		arg.Name,
+		arg.ManagementRepoID,
+		arg.BranchPattern,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.ManagementRepoID,
+		&i.BranchPattern,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

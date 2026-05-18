@@ -33,6 +33,7 @@ import (
 type serviceHandler struct {
 	db            domain.DbWorkspaceAdapter
 	q             *database.Queries
+	pool          *pgxpool.Pool
 	github        domain.GitHubWorkspaceAdapter
 	token         string
 	queue         *asynq.Client
@@ -84,6 +85,7 @@ func main() {
 	h := &serviceHandler{
 		db:            dbadapter.New(pool),
 		q:             database.New(pool),
+		pool:          pool,
 		github:        ghadapter.New(cfg.GitHubToken),
 		token:         cfg.GitHubToken,
 		queue:         client,
@@ -149,14 +151,29 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 		req.DefaultBranch = "main"
 	}
 
+	owner, repo, err := parseGitHubRepo(req.RepoURL)
+	if err != nil {
+		writeAnyError(w, err)
+		return
+	}
+	if existing, found, err := h.findExistingImport(r.Context(), owner, repo); err != nil {
+		writeAnyError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":         "exists",
+			"workspace_id":   uuidString(existing.ID),
+			"name":           existing.Name,
+			"slug":           existing.Slug,
+			"repo_url":       req.RepoURL,
+			"default_branch": req.DefaultBranch,
+		})
+		return
+	}
+
 	workspaceID := uuid.NewString()
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		owner, repo, err := parseGitHubRepo(req.RepoURL)
-		if err != nil {
-			writeAnyError(w, err)
-			return
-		}
 		name = owner + "/" + repo
 	}
 	slug := slugify(name)
@@ -164,8 +181,22 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 		slug = workspaceID
 	}
 
-	workspaceID, err := h.createImportPlaceholder(r.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch)
+	workspaceID, err = h.createImportPlaceholder(r.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch)
 	if err != nil {
+		if existing, found, findErr := h.findExistingImport(r.Context(), owner, repo); findErr != nil {
+			writeAnyError(w, err)
+			return
+		} else if found {
+			writeJSON(w, http.StatusOK, map[string]string{
+				"status":         "exists",
+				"workspace_id":   uuidString(existing.ID),
+				"name":           existing.Name,
+				"slug":           existing.Slug,
+				"repo_url":       req.RepoURL,
+				"default_branch": req.DefaultBranch,
+			})
+			return
+		}
 		writeAnyError(w, err)
 		return
 	}
@@ -190,10 +221,19 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 		writeAnyError(w, err)
 		return
 	}
-	info, err := h.queue.Enqueue(task)
+	info, err := h.queue.Enqueue(task, asynq.TaskID(workspaceSyncTaskID(payload)))
 	if err != nil {
 		if failErr := h.markRunFailed(r.Context(), run.ID, "ENQUEUE_FAILED", err.Error()); failErr != nil {
 			log.Printf("mark import enqueue failed run failed workspace_id=%s run_id=%s: %v", workspaceID, syncRunID, failErr)
+		}
+		if isDedupeError(err) {
+			writeJSON(w, http.StatusAccepted, map[string]string{
+				"status":       "already_queued",
+				"workspace_id": workspaceID,
+				"sync_run_id":  syncRunID,
+				"type":         queue.TypeWorkspaceSync,
+			})
+			return
 		}
 		writeAnyError(w, fmt.Errorf("enqueue task: %w", err))
 		return
@@ -256,8 +296,15 @@ func (h *serviceHandler) internalWorkspaceHandler(w http.ResponseWriter, r *http
 		writeAnyError(w, err)
 		return
 	}
-	info, err := h.queue.Enqueue(task)
+	info, err := h.queue.Enqueue(task, asynq.TaskID(workspaceSyncTaskID(payload)))
 	if err != nil {
+		if isDedupeError(err) {
+			writeJSON(w, http.StatusAccepted, map[string]string{
+				"status": "already_queued",
+				"type":   queue.TypeWorkspaceSync,
+			})
+			return
+		}
 		writeAnyError(w, fmt.Errorf("enqueue task: %w", err))
 		return
 	}
@@ -336,9 +383,9 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 	case webhook.BranchFeature:
 		go h.enqueueTargetedSync(wsInfo, info.FeatureID, branch)
 		writeJSON(w, http.StatusOK, map[string]string{
-			"status":     "queued",
+			"status":      "queued",
 			"branch_kind": "feature",
-			"feature_id": info.FeatureID,
+			"feature_id":  info.FeatureID,
 		})
 
 	case webhook.BranchTask:
@@ -347,10 +394,10 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 				wsInfo.workspaceID, info.FeatureID, info.TaskID, err)
 		}
 		writeJSON(w, http.StatusOK, map[string]string{
-			"status":     "queued",
+			"status":      "queued",
 			"branch_kind": "task",
-			"feature_id": info.FeatureID,
-			"task_id":    info.TaskID,
+			"feature_id":  info.FeatureID,
+			"task_id":     info.TaskID,
 		})
 	}
 }
@@ -435,7 +482,26 @@ func (h *serviceHandler) enqueueTaskSync(workspaceID, featureID, taskID string) 
 
 // isDedupeError returns true when the asynq error indicates a duplicate task (Unique constraint).
 func isDedupeError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "task already exists")
+	return errors.Is(err, asynq.ErrDuplicateTask) || errors.Is(err, asynq.ErrTaskIDConflict) ||
+		(err != nil && strings.Contains(err.Error(), "task already exists"))
+}
+
+func (h *serviceHandler) findExistingImport(ctx context.Context, owner, repo string) (database.Workspace, bool, error) {
+	src, err := h.q.GetGitHubSourceByRepo(ctx, database.GetGitHubSourceByRepoParams{
+		RepoOwner: owner,
+		RepoName:  repo,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return database.Workspace{}, false, nil
+		}
+		return database.Workspace{}, false, fmt.Errorf("get github source by repo: %w", err)
+	}
+	ws, err := h.q.GetWorkspace(ctx, src.WorkspaceID)
+	if err != nil {
+		return database.Workspace{}, false, fmt.Errorf("get existing imported workspace: %w", err)
+	}
+	return ws, true, nil
 }
 
 func (h *serviceHandler) createImportPlaceholder(ctx context.Context, workspaceID, name, slug, repoURL, defaultBranch string) (string, error) {
@@ -443,7 +509,28 @@ func (h *serviceHandler) createImportPlaceholder(ctx context.Context, workspaceI
 	if err != nil {
 		return "", err
 	}
-	ws, err := h.q.UpsertWorkspace(ctx, database.UpsertWorkspaceParams{
+	if h.pool == nil {
+		return h.createImportPlaceholderWithQueries(ctx, h.q, uid, name, slug, repoURL, defaultBranch)
+	}
+
+	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", fmt.Errorf("begin import placeholder transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	actualWorkspaceID, err := h.createImportPlaceholderWithQueries(ctx, h.q.WithTx(tx), uid, name, slug, repoURL, defaultBranch)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit import placeholder transaction: %w", err)
+	}
+	return actualWorkspaceID, nil
+}
+
+func (h *serviceHandler) createImportPlaceholderWithQueries(ctx context.Context, q *database.Queries, uid pgtype.UUID, name, slug, repoURL, defaultBranch string) (string, error) {
+	ws, err := q.UpsertWorkspaceByID(ctx, database.UpsertWorkspaceByIDParams{
 		ID:               uid,
 		Slug:             slug,
 		Name:             name,
@@ -453,13 +540,17 @@ func (h *serviceHandler) createImportPlaceholder(ctx context.Context, workspaceI
 		return "", fmt.Errorf("upsert import placeholder workspace: %w", err)
 	}
 	actualWorkspaceID := uuidString(ws.ID)
-	if err := h.upsertGitHubSource(ctx, actualWorkspaceID, repoURL, defaultBranch); err != nil {
+	if err := h.upsertGitHubSourceWithQueries(ctx, q, actualWorkspaceID, repoURL, defaultBranch); err != nil {
 		return "", err
 	}
 	return actualWorkspaceID, nil
 }
 
 func (h *serviceHandler) upsertGitHubSource(ctx context.Context, workspaceID, repoURL, defaultBranch string) error {
+	return h.upsertGitHubSourceWithQueries(ctx, h.q, workspaceID, repoURL, defaultBranch)
+}
+
+func (h *serviceHandler) upsertGitHubSourceWithQueries(ctx context.Context, q *database.Queries, workspaceID, repoURL, defaultBranch string) error {
 	uid, err := pgUUID(workspaceID)
 	if err != nil {
 		return err
@@ -468,7 +559,7 @@ func (h *serviceHandler) upsertGitHubSource(ctx context.Context, workspaceID, re
 	if err != nil {
 		return err
 	}
-	_, err = h.q.UpsertGitHubSource(ctx, database.UpsertGitHubSourceParams{
+	_, err = q.UpsertGitHubSource(ctx, database.UpsertGitHubSourceParams{
 		WorkspaceID:   uid,
 		RepoURL:       repoURL,
 		RepoOwner:     owner,
@@ -511,6 +602,23 @@ func (h *serviceHandler) markRunFailed(ctx context.Context, runID pgtype.UUID, c
 		return fmt.Errorf("update sync run failed: %w", err)
 	}
 	return nil
+}
+
+func workspaceSyncTaskID(payload queue.WorkspaceSyncPayload) string {
+	ref := payload.Ref
+	if ref == "" {
+		ref = payload.DefaultBranch
+	}
+	mode := payload.Mode
+	if mode == "" {
+		mode = "full"
+	}
+	raw := payload.WorkspaceID + "-" + payload.RepoURL + "-" + ref + "-" + mode + "-" + payload.FeatureID
+	id := slugify(raw)
+	if id == "" {
+		id = payload.WorkspaceID
+	}
+	return "workspace-sync-" + id
 }
 
 func uuidString(uid pgtype.UUID) string {

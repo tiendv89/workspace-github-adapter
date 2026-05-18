@@ -3,7 +3,7 @@ SELECT id, workspace_id, feature_id, feature_name, task_id, title, repo, status,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id::text = $2
+WHERE workspace_id = $1 AND feature_name = $2
 ORDER BY task_id;
 
 -- name: ListWorkspaceTasks :many
@@ -19,7 +19,7 @@ SELECT id, workspace_id, feature_id, feature_name, task_id, title, repo, status,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id::text = $2 AND id::text = $3;
+WHERE workspace_id = $1 AND feature_name = $2 AND task_id = $3;
 
 -- name: UpsertWorkspaceTask :one
 INSERT INTO workspace_tasks (
@@ -49,9 +49,9 @@ RETURNING id, workspace_id, feature_id, feature_name, task_id, title, repo, stat
 -- name: DeleteFeatureTasksNotIn :exec
 DELETE FROM workspace_tasks
 WHERE workspace_id = $1
-  AND feature_id::text = $2
+  AND feature_id = $2
   AND task_id != ALL($3::text[]);
 
 -- name: DeleteAllFeatureTasks :exec
 DELETE FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id::text = $2;
+WHERE workspace_id = $1 AND feature_id = $2;

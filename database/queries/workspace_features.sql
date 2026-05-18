@@ -9,7 +9,7 @@ ORDER BY updated_at DESC;
 SELECT id, workspace_id, feature_id, title, feature_status, current_stage, next_action,
        stages, source_path, source_hash, created_at, updated_at
 FROM workspace_features
-WHERE workspace_id = $1 AND id::text = $2;
+WHERE workspace_id = $1 AND feature_id = $2;
 
 -- name: UpsertWorkspaceFeature :one
 INSERT INTO workspace_features (

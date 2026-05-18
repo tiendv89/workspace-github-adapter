@@ -22,3 +22,14 @@ ON CONFLICT (slug) DO UPDATE SET
     branch_pattern     = EXCLUDED.branch_pattern,
     updated_at         = now()
 RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at;
+
+-- name: UpsertWorkspaceByID :one
+INSERT INTO workspaces (id, slug, name, management_repo_id, branch_pattern, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, now(), now())
+ON CONFLICT (id) DO UPDATE SET
+    slug               = EXCLUDED.slug,
+    name               = EXCLUDED.name,
+    management_repo_id = EXCLUDED.management_repo_id,
+    branch_pattern     = EXCLUDED.branch_pattern,
+    updated_at         = now()
+RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at;

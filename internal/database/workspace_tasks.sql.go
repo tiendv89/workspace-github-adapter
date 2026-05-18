@@ -14,7 +14,7 @@ SELECT id, workspace_id, feature_id, feature_name, task_id, title, repo, status,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id::text = $2
+WHERE workspace_id = $1 AND feature_name = $2
 ORDER BY task_id`
 
 type ListFeatureTasksParams struct {
@@ -113,7 +113,7 @@ SELECT id, workspace_id, feature_id, feature_name, task_id, title, repo, status,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id::text = $2 AND id::text = $3`
+WHERE workspace_id = $1 AND feature_name = $2 AND task_id = $3`
 
 type GetWorkspaceTaskParams struct {
 	WorkspaceID pgtype.UUID
@@ -235,12 +235,12 @@ func (q *Queries) UpsertWorkspaceTask(ctx context.Context, arg UpsertWorkspaceTa
 const deleteFeatureTasksNotIn = `-- name: DeleteFeatureTasksNotIn :exec
 DELETE FROM workspace_tasks
 WHERE workspace_id = $1
-  AND feature_id::text = $2
+  AND feature_id = $2
   AND task_id != ALL($3::text[])`
 
 type DeleteFeatureTasksNotInParams struct {
 	WorkspaceID pgtype.UUID
-	FeatureID   string
+	FeatureID   pgtype.UUID
 	TaskIds     []string
 }
 
@@ -251,11 +251,11 @@ func (q *Queries) DeleteFeatureTasksNotIn(ctx context.Context, arg DeleteFeature
 
 const deleteAllFeatureTasks = `-- name: DeleteAllFeatureTasks :exec
 DELETE FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id::text = $2`
+WHERE workspace_id = $1 AND feature_id = $2`
 
 type DeleteAllFeatureTasksParams struct {
 	WorkspaceID pgtype.UUID
-	FeatureID   string
+	FeatureID   pgtype.UUID
 }
 
 func (q *Queries) DeleteAllFeatureTasks(ctx context.Context, arg DeleteAllFeatureTasksParams) error {

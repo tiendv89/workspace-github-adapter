@@ -11,7 +11,7 @@ import (
 const listFeatureDocuments = `-- name: ListFeatureDocuments :many
 SELECT id, workspace_id, feature_id, feature_name, document_type, source_path, url, created_at, updated_at
 FROM workspace_feature_documents
-WHERE workspace_id = $1 AND feature_id::text = $2
+WHERE workspace_id = $1 AND feature_name = $2
 ORDER BY document_type`
 
 type ListFeatureDocumentsParams struct {
@@ -133,12 +133,12 @@ func (q *Queries) UpsertFeatureDocument(ctx context.Context, arg UpsertFeatureDo
 const deleteFeatureDocumentsNotIn = `-- name: DeleteFeatureDocumentsNotIn :exec
 DELETE FROM workspace_feature_documents
 WHERE workspace_id = $1
-  AND feature_id::text = $2
+  AND feature_id = $2
   AND document_type != ALL($3::text[])`
 
 type DeleteFeatureDocumentsNotInParams struct {
 	WorkspaceID   pgtype.UUID
-	FeatureID     string
+	FeatureID     pgtype.UUID
 	DocumentTypes []string
 }
 
@@ -149,11 +149,11 @@ func (q *Queries) DeleteFeatureDocumentsNotIn(ctx context.Context, arg DeleteFea
 
 const deleteAllFeatureDocuments = `-- name: DeleteAllFeatureDocuments :exec
 DELETE FROM workspace_feature_documents
-WHERE workspace_id = $1 AND feature_id::text = $2`
+WHERE workspace_id = $1 AND feature_id = $2`
 
 type DeleteAllFeatureDocumentsParams struct {
 	WorkspaceID pgtype.UUID
-	FeatureID   string
+	FeatureID   pgtype.UUID
 }
 
 func (q *Queries) DeleteAllFeatureDocuments(ctx context.Context, arg DeleteAllFeatureDocumentsParams) error {
