@@ -48,21 +48,24 @@ func main() {
 	}
 
 	h := &handler{
-		db:     dbadapter.New(pool),
-		q:      database.New(pool),
-		github: ghadapter.New(cfg.GitHubToken),
-		token:  cfg.GitHubToken,
+		db:       dbadapter.New(pool),
+		q:        database.New(pool),
+		github:   ghadapter.New(cfg.GitHubToken),
+		token:    cfg.GitHubToken,
+		redisOpt: redisOpt,
 	}
 
 	srv := asynq.NewServer(redisOpt, asynq.Config{
 		Concurrency: 5,
 		Queues: map[string]int{
-			"default": 1,
+			queue.QueueDefault:  1,
+			queue.QueueTaskSync: 3,
 		},
 	})
 
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(queue.TypeWorkspaceSync, h.handleWorkspaceSync)
+	mux.HandleFunc(queue.TypeTaskSync, h.handleTaskSync)
 
 	log.Println("adapter-worker listening for Redis queue tasks")
 	if err := srv.Run(mux); err != nil {
@@ -71,10 +74,11 @@ func main() {
 }
 
 type handler struct {
-	db     domain.DbWorkspaceAdapter
-	q      *database.Queries
-	github domain.GitHubWorkspaceAdapter
-	token  string
+	db       domain.DbWorkspaceAdapter
+	q        *database.Queries
+	github   domain.GitHubWorkspaceAdapter
+	token    string
+	redisOpt asynq.RedisConnOpt
 }
 
 func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error {
@@ -104,7 +108,20 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		mode = "full"
 	}
 
+	// Targeted sync: fetch and upsert a single feature only.
+	if mode == "targeted" && payload.FeatureID != "" {
+		return h.handleTargetedSync(ctx, payload, trigger, ref)
+	}
+
+	// Full reconciliation: clear pending task-sync jobs first, then sync everything.
 	log.Printf("sync started workspace_id=%s repo_url=%s ref=%s", payload.WorkspaceID, payload.RepoURL, ref)
+
+	// Delete all pending task-sync jobs before full reconciliation starts.
+	// The full read supersedes all queued partial updates.
+	inspector := asynq.NewInspector(h.redisOpt)
+	if _, err := inspector.DeleteAllPendingTasks(queue.QueueTaskSync); err != nil {
+		log.Printf("warn: clear task-sync queue workspace_id=%s: %v", payload.WorkspaceID, err)
+	}
 
 	snap, err := h.github.ImportWorkspace(ctx, domain.ImportInput{
 		RepoURL:       payload.RepoURL,
@@ -136,6 +153,95 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 
 	log.Printf("sync finished workspace_id=%s commit_sha=%s", payload.WorkspaceID, snap.CommitSHA)
 	return nil
+}
+
+// handleTargetedSync fetches and upserts a single feature's artifacts.
+func (h *handler) handleTargetedSync(ctx context.Context, payload queue.WorkspaceSyncPayload, trigger, ref string) error {
+	log.Printf("targeted sync started workspace_id=%s feature_id=%s ref=%s",
+		payload.WorkspaceID, payload.FeatureID, ref)
+
+	snap, err := h.github.FetchFeature(ctx, payload.RepoURL, ref, payload.FeatureID)
+	if err != nil {
+		h.recordFailedRun(ctx, payload, trigger, "targeted", err)
+		return err
+	}
+
+	if err := h.db.SaveFeatureSnapshot(ctx, payload.WorkspaceID, *snap); err != nil {
+		h.recordFailedRun(ctx, payload, trigger, "targeted", err)
+		return err
+	}
+
+	runUID, err := h.ensureSyncRun(ctx, payload, trigger, "targeted", ref, nil)
+	if err != nil {
+		return err
+	}
+	_, err = h.q.UpdateSyncRunSuccess(ctx, database.UpdateSyncRunSuccessParams{
+		ID: runUID,
+	})
+	if err != nil {
+		log.Printf("warn: update targeted sync run success workspace_id=%s: %v", payload.WorkspaceID, err)
+	}
+
+	log.Printf("targeted sync finished workspace_id=%s feature_id=%s", payload.WorkspaceID, payload.FeatureID)
+	return nil
+}
+
+// handleTaskSync processes task:sync jobs from the task-sync queue.
+// It derives the task branch from workspace branch_pattern, fetches the task YAML, and upserts.
+func (h *handler) handleTaskSync(ctx context.Context, t *asynq.Task) error {
+	var payload queue.TaskSyncPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return fmt.Errorf("unmarshal task sync payload: %w", err)
+	}
+	if payload.WorkspaceID == "" || payload.FeatureID == "" || payload.TaskID == "" {
+		return fmt.Errorf("task sync payload missing required fields: %+v", payload)
+	}
+
+	log.Printf("task sync started workspace_id=%s feature_id=%s task_id=%s",
+		payload.WorkspaceID, payload.FeatureID, payload.TaskID)
+
+	// Look up workspace to get repo_url and branch_pattern.
+	uid, err := pgUUID(payload.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	ws, err := h.q.GetWorkspace(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("get workspace for task sync: %w", err)
+	}
+	src, err := h.q.GetGitHubSource(ctx, uid)
+	if err != nil {
+		return fmt.Errorf("get github source for task sync: %w", err)
+	}
+
+	// Derive the task branch from branch_pattern.
+	branchPattern := "feature/{feature_id}-{work_id}"
+	if ws.BranchPattern != nil && *ws.BranchPattern != "" {
+		branchPattern = *ws.BranchPattern
+	}
+	taskBranch := deriveBranch(branchPattern, payload.FeatureID, payload.TaskID)
+
+	taskSnap, err := h.github.FetchTask(ctx, src.RepoURL, taskBranch, payload.FeatureID, payload.TaskID)
+	if err != nil {
+		return fmt.Errorf("fetch task %s/%s on branch %s: %w", payload.FeatureID, payload.TaskID, taskBranch, err)
+	}
+
+	if err := h.db.SaveTaskSnapshot(ctx, payload.WorkspaceID, *taskSnap); err != nil {
+		return fmt.Errorf("save task snapshot %s/%s: %w", payload.FeatureID, payload.TaskID, err)
+	}
+
+	log.Printf("task sync finished workspace_id=%s feature_id=%s task_id=%s",
+		payload.WorkspaceID, payload.FeatureID, payload.TaskID)
+	return nil
+}
+
+// deriveBranch substitutes feature_id and task_id into a branch pattern.
+// Pattern format: "feature/{feature_id}-{work_id}"
+func deriveBranch(pattern, featureID, taskID string) string {
+	branch := pattern
+	branch = strings.ReplaceAll(branch, "{feature_id}", featureID)
+	branch = strings.ReplaceAll(branch, "{work_id}", taskID)
+	return branch
 }
 
 func (h *handler) upsertGitHubSource(ctx context.Context, workspaceID, repoURL, defaultBranch string) error {

@@ -330,6 +330,58 @@ func (a *Adapter) SaveSnapshot(ctx context.Context, workspaceID string, snapshot
 	return tx.Commit(ctx)
 }
 
+// SaveFeatureSnapshot upserts a single feature's rows in a transaction.
+func (a *Adapter) SaveFeatureSnapshot(ctx context.Context, workspaceID string, snap domain.FeatureSnapshot) error {
+	uid, err := parseUUID(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := upsertFeatureSnapshot(ctx, a.q.WithTx(tx), uid, snap); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// SaveTaskSnapshot upserts a single task's rows (workspace_tasks + activity) in a transaction.
+func (a *Adapter) SaveTaskSnapshot(ctx context.Context, workspaceID string, snap domain.TaskSnapshot) error {
+	uid, err := parseUUID(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	// Resolve the feature UUID by string feature_id using a raw query.
+	var featureUUID pgtype.UUID
+	err = a.pool.QueryRow(ctx,
+		`SELECT id FROM workspace_features WHERE workspace_id = $1 AND feature_id = $2`,
+		uid, snap.FeatureID,
+	).Scan(&featureUUID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.NewDatabaseError(domain.ErrDatabaseNotFound,
+				"feature not found for task sync: "+snap.FeatureID)
+		}
+		return dbErr("get feature for task sync", err)
+	}
+
+	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := upsertTaskSnapshot(ctx, a.q.WithTx(tx), uid, featureUUID, snap.FeatureID, snap); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // GetActiveSnapshot returns the latest WorkspaceSnapshot reconstructed from core tables.
 func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*domain.WorkspaceSnapshot, error) {
 	uid, err := parseUUID(workspaceID)
