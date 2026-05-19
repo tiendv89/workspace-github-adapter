@@ -486,6 +486,9 @@ func TestImportWorkspaceSuccess(t *testing.T) {
 	if len(snap.Repos) != 2 {
 		t.Errorf("expected 2 repos, got %d", len(snap.Repos))
 	}
+	if snap.BranchPattern != "feature/{feature_id}-{work_id}" {
+		t.Errorf("expected branch pattern from workspace.yaml, got %q", snap.BranchPattern)
+	}
 }
 
 func TestImportWorkspaceMissingInput(t *testing.T) {

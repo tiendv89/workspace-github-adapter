@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 )
@@ -148,6 +153,125 @@ func TestHandleWorkspaceSync_MissingWorkspaceIDDoesNotCreateWorkspace(t *testing
 	}
 }
 
+func TestHandleWorkspaceSync_CleanupFailureSkipsImport(t *testing.T) {
+	importCalled := false
+	saveCalled := false
+	cleanupErr := errors.New("redis unavailable")
+	runDB := newFakeSyncRunDB(t)
+	h := &handler{
+		db: &stubDB{
+			saveSnap: func(context.Context, string, *domain.WorkspaceSnapshot) error {
+				saveCalled = true
+				return nil
+			},
+		},
+		github: &stubGitHub{
+			importWorkspace: func(context.Context, domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+				importCalled = true
+				t.Fatal("GitHub import must not run when pending task cleanup fails")
+				return nil, nil
+			},
+		},
+		newPendingTaskInspector: func() pendingTaskInspector {
+			return &fakePendingTaskInspector{listErr: cleanupErr}
+		},
+		q: database.New(runDB),
+	}
+	payload := queue.WorkspaceSyncPayload{
+		WorkspaceID:   "00000000-0000-0000-0000-000000000001",
+		RepoURL:       "https://github.com/acme/repo",
+		DefaultBranch: "main",
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal workspace sync payload: %v", err)
+	}
+
+	err = h.handleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
+	if err == nil {
+		t.Fatal("expected cleanup failure to fail the full sync")
+	}
+	if !strings.Contains(err.Error(), "clear pending task-sync jobs") {
+		t.Fatalf("expected cleanup failure context, got %v", err)
+	}
+	if importCalled {
+		t.Fatal("expected GitHub import not to be called")
+	}
+	if saveCalled {
+		t.Fatal("expected snapshot not to be saved")
+	}
+	if runDB.insertSyncRunCalls != 1 {
+		t.Fatalf("expected one failed sync run insert, got %d", runDB.insertSyncRunCalls)
+	}
+	if runDB.updateFailedCalls != 1 {
+		t.Fatalf("expected one failed sync run update, got %d", runDB.updateFailedCalls)
+	}
+	if runDB.lastMode != "full" {
+		t.Fatalf("failed sync run mode = %q, want full", runDB.lastMode)
+	}
+	if runDB.lastErrorCode == nil || *runDB.lastErrorCode != "WORKER_SYNC_FAILED" {
+		t.Fatalf("failed sync run error code = %v, want WORKER_SYNC_FAILED", runDB.lastErrorCode)
+	}
+}
+
+func TestHandleTargetedSync_FetchFeatureFailureSkipsFeaturePersistence(t *testing.T) {
+	saveCalled := false
+	runDB := newFakeSyncRunDB(t)
+	fetchErr := domain.SourceError{
+		Code:      domain.ErrParserInvalidYAML,
+		Message:   "invalid task YAML",
+		Source:    domain.ErrorSourceParser,
+		Retryable: false,
+		Path:      "docs/features/alpha-feature/tasks/T2.yaml",
+	}
+	h := &handler{
+		db: &stubDB{
+			saveFeatSnap: func(context.Context, string, domain.FeatureSnapshot) error {
+				saveCalled = true
+				return nil
+			},
+		},
+		github: &stubGitHub{
+			fetchFeat: func(context.Context, string, string, string) (*domain.FeatureSnapshot, error) {
+				return nil, fetchErr
+			},
+		},
+		q: database.New(runDB),
+	}
+	payload := queue.WorkspaceSyncPayload{
+		WorkspaceID: "00000000-0000-0000-0000-000000000001",
+		RepoURL:     "https://github.com/acme/repo",
+		FeatureID:   "alpha-feature",
+	}
+
+	err := h.handleTargetedSync(context.Background(), payload, "webhook", "main")
+	if err == nil {
+		t.Fatal("expected targeted sync to fail when feature fetch fails")
+	}
+	var se domain.SourceError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected SourceError, got %T: %v", err, err)
+	}
+	if se.Path != fetchErr.Path {
+		t.Fatalf("source error path = %q, want %q", se.Path, fetchErr.Path)
+	}
+	if saveCalled {
+		t.Fatal("expected SaveFeatureSnapshot not to be called")
+	}
+	if runDB.insertSyncRunCalls != 1 {
+		t.Fatalf("expected one failed targeted sync run insert, got %d", runDB.insertSyncRunCalls)
+	}
+	if runDB.updateFailedCalls != 1 {
+		t.Fatalf("expected one failed targeted sync run update, got %d", runDB.updateFailedCalls)
+	}
+	if runDB.lastMode != "targeted" {
+		t.Fatalf("failed sync run mode = %q, want targeted", runDB.lastMode)
+	}
+	if runDB.lastErrorCode == nil || *runDB.lastErrorCode != string(domain.ErrParserInvalidYAML) {
+		t.Fatalf("failed sync run error code = %v, want %s", runDB.lastErrorCode, domain.ErrParserInvalidYAML)
+	}
+}
+
 func TestClearPendingTaskSyncJobsForWorkspaceDeletesOnlyMatchingWorkspace(t *testing.T) {
 	inspector := &fakePendingTaskInspector{
 		tasks: []*asynq.TaskInfo{
@@ -269,9 +393,13 @@ func TestHandleTaskSync_RetryableFailure(t *testing.T) {
 type fakePendingTaskInspector struct {
 	tasks      []*asynq.TaskInfo
 	deletedIDs []string
+	listErr    error
 }
 
 func (f *fakePendingTaskInspector) ListPendingTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	out := make([]*asynq.TaskInfo, len(f.tasks))
 	copy(out, f.tasks)
 	return out, nil
@@ -286,6 +414,10 @@ func (f *fakePendingTaskInspector) DeleteTask(_ string, id string) error {
 		}
 	}
 	return errors.New("task not found")
+}
+
+func (f *fakePendingTaskInspector) Close() error {
+	return nil
 }
 
 func taskInfo(t *testing.T, id, taskType string, payload any) *asynq.TaskInfo {
@@ -307,4 +439,162 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+type fakeSyncRunDB struct {
+	t                  *testing.T
+	workspaceID        pgtype.UUID
+	runID              pgtype.UUID
+	insertSyncRunCalls int
+	updateFailedCalls  int
+	lastMode           string
+	lastErrorCode      *string
+	lastErrorMessage   *string
+}
+
+func newFakeSyncRunDB(t *testing.T) *fakeSyncRunDB {
+	t.Helper()
+	return &fakeSyncRunDB{
+		t:           t,
+		workspaceID: mustTestUUID(t, "00000000-0000-0000-0000-000000000001"),
+		runID:       mustTestUUID(t, "00000000-0000-0000-0000-000000000099"),
+	}
+}
+
+func (f *fakeSyncRunDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("not implemented")
+}
+
+func (f *fakeSyncRunDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeSyncRunDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "FROM workspaces"):
+		return workspaceRow{workspaceID: f.workspaceID}
+	case strings.Contains(query, "FROM workspace_features"):
+		return errorRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "INSERT INTO workspace_sync_runs"):
+		f.insertSyncRunCalls++
+		if len(args) > 5 {
+			if mode, ok := args[5].(string); ok {
+				f.lastMode = mode
+			}
+		}
+		return syncRunRow{
+			id:          f.runID,
+			workspaceID: f.workspaceID,
+			status:      "running",
+			mode:        f.lastMode,
+		}
+	case strings.Contains(query, "UPDATE workspace_sync_runs SET") && strings.Contains(query, "status        = 'failed'"):
+		f.updateFailedCalls++
+		if len(args) > 1 {
+			f.lastErrorCode, _ = args[1].(*string)
+		}
+		if len(args) > 2 {
+			f.lastErrorMessage, _ = args[2].(*string)
+		}
+		return syncRunRow{
+			id:           f.runID,
+			workspaceID:  f.workspaceID,
+			status:       "failed",
+			mode:         f.lastMode,
+			errorCode:    f.lastErrorCode,
+			errorMessage: f.lastErrorMessage,
+		}
+	default:
+		f.t.Fatalf("unexpected query: %s", query)
+		return errorRow{err: errors.New("unexpected query")}
+	}
+}
+
+type workspaceRow struct {
+	workspaceID pgtype.UUID
+}
+
+func (r workspaceRow) Scan(dest ...any) error {
+	values := []any{
+		r.workspaceID,
+		"workspace",
+		"Workspace",
+		"management-repo",
+		(*string)(nil),
+		pgtype.Timestamptz{},
+		pgtype.Timestamptz{},
+	}
+	return scanValues(dest, values)
+}
+
+type syncRunRow struct {
+	id           pgtype.UUID
+	workspaceID  pgtype.UUID
+	status       string
+	mode         string
+	errorCode    *string
+	errorMessage *string
+}
+
+func (r syncRunRow) Scan(dest ...any) error {
+	changedPaths := json.RawMessage("[]")
+	metadata := json.RawMessage("{}")
+	values := []any{
+		r.id,
+		r.workspaceID,
+		"redis_worker",
+		(*string)(nil),
+		pgtype.UUID{},
+		pgtype.UUID{},
+		r.mode,
+		r.status,
+		(*string)(nil),
+		changedPaths,
+		pgtype.Timestamptz{},
+		pgtype.Timestamptz{},
+		r.errorCode,
+		r.errorMessage,
+		metadata,
+	}
+	return scanValues(dest, values)
+}
+
+type errorRow struct {
+	err error
+}
+
+func (r errorRow) Scan(...any) error {
+	return r.err
+}
+
+func scanValues(dest []any, values []any) error {
+	if len(dest) != len(values) {
+		return errors.New("unexpected scan destination count")
+	}
+	for i, d := range dest {
+		switch out := d.(type) {
+		case *pgtype.UUID:
+			*out = values[i].(pgtype.UUID)
+		case *string:
+			*out = values[i].(string)
+		case **string:
+			*out = values[i].(*string)
+		case *json.RawMessage:
+			*out = values[i].(json.RawMessage)
+		case *pgtype.Timestamptz:
+			*out = values[i].(pgtype.Timestamptz)
+		default:
+			return errors.New("unsupported scan destination")
+		}
+	}
+	return nil
+}
+
+func mustTestUUID(t *testing.T, raw string) pgtype.UUID {
+	t.Helper()
+	var uid pgtype.UUID
+	if err := uid.Scan(raw); err != nil {
+		t.Fatalf("scan uuid %s: %v", raw, err)
+	}
+	return uid
 }

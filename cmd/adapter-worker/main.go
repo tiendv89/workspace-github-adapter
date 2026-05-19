@@ -74,16 +74,18 @@ func main() {
 }
 
 type handler struct {
-	db       domain.DbWorkspaceAdapter
-	q        *database.Queries
-	github   domain.GitHubWorkspaceAdapter
-	token    string
-	redisOpt asynq.RedisConnOpt
+	db                      domain.DbWorkspaceAdapter
+	q                       *database.Queries
+	github                  domain.GitHubWorkspaceAdapter
+	token                   string
+	redisOpt                asynq.RedisConnOpt
+	newPendingTaskInspector func() pendingTaskInspector
 }
 
 type pendingTaskInspector interface {
 	ListPendingTasks(queue string, opts ...asynq.ListOption) ([]*asynq.TaskInfo, error)
 	DeleteTask(queue string, id string) error
+	Close() error
 }
 
 func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error {
@@ -126,14 +128,16 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 
 	// Delete all pending task-sync jobs before full reconciliation starts.
 	// The full read supersedes all queued partial updates.
-	inspector := asynq.NewInspector(h.redisOpt)
+	inspector := h.openPendingTaskInspector()
 	defer func() {
 		if err := inspector.Close(); err != nil {
 			log.Printf("warn: close asynq inspector: %v", err)
 		}
 	}()
 	if _, err := clearPendingTaskSyncJobsForWorkspace(inspector, payload.WorkspaceID); err != nil {
-		log.Printf("warn: clear task-sync queue workspace_id=%s: %v", payload.WorkspaceID, err)
+		err = fmt.Errorf("clear pending task-sync jobs for workspace %s: %w", payload.WorkspaceID, err)
+		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)
+		return err
 	}
 
 	snap, err := h.github.ImportWorkspace(ctx, domain.ImportInput{
@@ -166,6 +170,13 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 
 	log.Printf("sync finished workspace_id=%s commit_sha=%s", payload.WorkspaceID, snap.CommitSHA)
 	return nil
+}
+
+func (h *handler) openPendingTaskInspector() pendingTaskInspector {
+	if h.newPendingTaskInspector != nil {
+		return h.newPendingTaskInspector()
+	}
+	return asynq.NewInspector(h.redisOpt)
 }
 
 func clearPendingTaskSyncJobsForWorkspace(inspector pendingTaskInspector, workspaceID string) (int, error) {

@@ -1,11 +1,15 @@
 package db_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/adapter/db"
@@ -294,4 +298,74 @@ func TestRowToFeatureSummary(t *testing.T) {
 	if got.TaskCounts.Blocked != 1 {
 		t.Errorf("Blocked: got %d, want 1", got.TaskCounts.Blocked)
 	}
+}
+
+func TestUpsertSnapshotPersistsBranchPattern(t *testing.T) {
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+	branchPattern := "workspaces/{feature_id}/tasks/{work_id}"
+	fake := &branchPatternDB{t: t, workspaceID: workspaceID}
+
+	err := db.ExportedUpsertSnapshot(context.Background(), database.New(fake), workspaceID, &domain.WorkspaceSnapshot{
+		Name:          "Workspace",
+		Slug:          "workspace",
+		BranchPattern: branchPattern,
+	})
+	if err != nil {
+		t.Fatalf("upsert snapshot: %v", err)
+	}
+	if fake.updateCalls != 1 {
+		t.Fatalf("expected one workspace update call, got %d", fake.updateCalls)
+	}
+	if fake.branchPattern == nil {
+		t.Fatal("expected branch_pattern to be persisted, got nil")
+	}
+	if *fake.branchPattern != branchPattern {
+		t.Fatalf("branch_pattern = %q, want %q", *fake.branchPattern, branchPattern)
+	}
+}
+
+type branchPatternDB struct {
+	t             *testing.T
+	workspaceID   pgtype.UUID
+	updateCalls   int
+	branchPattern *string
+}
+
+func (f *branchPatternDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
+func (f *branchPatternDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *branchPatternDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	if !strings.Contains(query, "UPDATE workspaces") {
+		f.t.Fatalf("unexpected query: %s", query)
+	}
+	f.updateCalls++
+	f.branchPattern, _ = args[4].(*string)
+	return workspaceUpdateRow{
+		workspaceID:   f.workspaceID,
+		branchPattern: f.branchPattern,
+	}
+}
+
+type workspaceUpdateRow struct {
+	workspaceID   pgtype.UUID
+	branchPattern *string
+}
+
+func (r workspaceUpdateRow) Scan(dest ...any) error {
+	if len(dest) != 7 {
+		return errors.New("unexpected workspace scan destination count")
+	}
+	*(dest[0].(*pgtype.UUID)) = r.workspaceID
+	*(dest[1].(*string)) = "workspace"
+	*(dest[2].(*string)) = "Workspace"
+	*(dest[3].(*string)) = "management-repo"
+	*(dest[4].(**string)) = r.branchPattern
+	*(dest[5].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
+	*(dest[6].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
+	return nil
 }

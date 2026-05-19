@@ -510,6 +510,7 @@ func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*d
 		Slug:             ws.Slug,
 		RepoURL:          repoURL,
 		ManagementRepoID: ws.ManagementRepoID,
+		BranchPattern:    derefStr(ws.BranchPattern),
 		Features:         featureSnapshots,
 		Repos:            repoEntries,
 	}, nil
@@ -543,6 +544,7 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, s
 		Slug:             snap.Slug,
 		Name:             snap.Name,
 		ManagementRepoID: mgmtRepoID,
+		BranchPattern:    ptrStr(snap.BranchPattern),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1056,6 +1058,13 @@ func ptrStr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // unmarshalStringSlice decodes a JSON array of strings.

@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,7 +53,7 @@ func (a *adapterWithTransportAndFetch) FetchFeature(ctx context.Context, repoURL
 		}
 	}
 	snap, errs := a.fetchFeature(ctx, c, owner, repo, ref, featureID, pathSet)
-	if len(errs) > 0 && snap == nil {
+	if len(errs) > 0 {
 		return nil, errs[0]
 	}
 	if snap == nil {
@@ -88,6 +89,61 @@ func (a *adapterWithTransportAndFetch) FetchTask(ctx context.Context, repoURL, t
 	}
 	snap := mapTaskSnapshot(parsed, featureID, taskID, taskPath, data)
 	return &snap, nil
+}
+
+func TestFetchFeature_InvalidTaskYAMLReturnsError(t *testing.T) {
+	statusData := fixture(t, "status_alpha.yaml")
+	taskData := fixture(t, "task_T1.yaml")
+	badTaskPath := "docs/features/alpha-feature/tasks/T2.yaml"
+
+	treePaths := []string{
+		"workspace.yaml",
+		"docs/features/alpha-feature/status.yaml",
+		"docs/features/alpha-feature/tasks/T1.yaml",
+		badTaskPath,
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/commits/main"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(commitJSON("sha-fetch")))
+		case strings.Contains(path, "/git/trees/"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(treeJSON(treePaths)))
+		case strings.Contains(path, "/contents/docs/features/alpha-feature/status.yaml"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON(statusData)))
+		case strings.Contains(path, "/contents/docs/features/alpha-feature/tasks/T1.yaml"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON(taskData)))
+		case strings.Contains(path, "/contents/"+badTaskPath):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON([]byte("id: ["))))
+		default:
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	adapter := newFetchAdapter(t, proxyTransport(srv.URL))
+	snap, err := adapter.FetchFeature(context.Background(), "https://github.com/owner/repo", "main", "alpha-feature")
+	if err == nil {
+		t.Fatalf("expected invalid task YAML to fail targeted fetch, got snapshot with %d tasks", len(snap.Tasks))
+	}
+	if snap != nil {
+		t.Fatalf("expected no partial snapshot on invalid task YAML, got %+v", snap)
+	}
+	var se domain.SourceError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected SourceError, got %T: %v", err, err)
+	}
+	if se.Path != badTaskPath {
+		t.Fatalf("source error path = %q, want %q", se.Path, badTaskPath)
+	}
 }
 
 // TestFetchFeature_Success verifies that FetchFeature fetches and parses a single feature.

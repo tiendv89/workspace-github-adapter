@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -31,6 +32,10 @@ func ExportedSyncRunToSourceState(r *database.WorkspaceSyncRun, threshold *time.
 
 func ExportedSyncRunToSourceStateFromValue(r database.WorkspaceSyncRun, threshold *time.Duration) domain.SourceState {
 	return syncRunToSourceState(&r, threshold)
+}
+
+func ExportedUpsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, snap *domain.WorkspaceSnapshot) error {
+	return upsertSnapshot(ctx, q, uid, snap)
 }
 
 // UUIDFromString parses a UUID string into pgtype.UUID — used by tests.

@@ -89,11 +89,7 @@ func (a *Adapter) FetchFeature(ctx context.Context, repoURL, ref, featureID stri
 
 	snap, errs := a.fetchFeature(ctx, c, owner, repo, ref, featureID, pathSet)
 	if len(errs) > 0 {
-		// Return the first hard error if snap is nil.
-		if snap == nil {
-			return nil, errs[0]
-		}
-		// Soft errors (e.g. optional files missing) are ignored for targeted sync.
+		return nil, errs[0]
 	}
 	if snap == nil {
 		return nil, domain.NewGitHubNotFoundError("https://github.com/" + owner + "/" + repo)
@@ -238,6 +234,7 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 		Slug:             slug,
 		RepoURL:          "https://github.com/" + owner + "/" + repo,
 		ManagementRepoID: wsCfg.ManagementRepo,
+		BranchPattern:    wsCfg.Git.BranchPattern,
 		CommitSHA:        commitSHA,
 		FetchedAt:        fetchedAt,
 		Features:         features,
@@ -320,6 +317,13 @@ func (a *Adapter) fetchFeature(ctx context.Context, c *client, owner, repo, ref,
 			continue
 		}
 		if taskData == nil {
+			errs = append(errs, domain.SourceError{
+				Code:      domain.ErrGitHubNotFound,
+				Message:   "task file not found: " + p,
+				Source:    domain.ErrorSourceGitHub,
+				Retryable: false,
+				Path:      p,
+			})
 			continue
 		}
 		taskParsed, parseErr := parseTaskYAML(taskData, p)

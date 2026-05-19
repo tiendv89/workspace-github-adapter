@@ -141,6 +141,7 @@ type WorkspaceSnapshot struct {
 	Slug             string
 	RepoURL          string
 	ManagementRepoID string
+	BranchPattern    string
 	CommitSHA        string
 	FetchedAt        time.Time
 	Features         []FeatureSnapshot
