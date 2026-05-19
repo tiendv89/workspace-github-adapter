@@ -1,7 +1,7 @@
 -- name: ListFeatureDocuments :many
 SELECT id, workspace_id, feature_id, feature_name, document_type, source_path, url, created_at, updated_at
 FROM workspace_feature_documents
-WHERE workspace_id = $1 AND feature_name = $2
+WHERE workspace_id = $1 AND feature_id = $2
 ORDER BY document_type;
 
 -- name: ListWorkspaceFeatureDocuments :many

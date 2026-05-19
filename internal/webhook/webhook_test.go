@@ -75,6 +75,19 @@ func TestClassifyBranch_Task(t *testing.T) {
 	}
 }
 
+func TestClassifyBranch_TaskWithDatedFeatureID(t *testing.T) {
+	info := webhook.ClassifyBranch("feature/test-webhook-19-05-T1", "main")
+	if info.Kind != webhook.BranchTask {
+		t.Errorf("expected BranchTask, got %v", info.Kind)
+	}
+	if info.FeatureID != "test-webhook-19-05" {
+		t.Errorf("expected FeatureID=test-webhook-19-05, got %q", info.FeatureID)
+	}
+	if info.TaskID != "T1" {
+		t.Errorf("expected TaskID=T1, got %q", info.TaskID)
+	}
+}
+
 func TestClassifyBranch_Ignored(t *testing.T) {
 	cases := []string{"hotfix/something", "dependabot/npm/foo", "renovate/bar", ""}
 	for _, branch := range cases {
@@ -153,6 +166,7 @@ func TestTouchedFeatureIDs_NoPaths(t *testing.T) {
 func TestParsePushEvent(t *testing.T) {
 	raw := []byte(`{
 		"ref": "refs/heads/feature/my-feature-T3",
+		"after": "abc123",
 		"repository": {"full_name": "owner/repo", "html_url": "https://github.com/owner/repo"},
 		"commits": [{"added": ["docs/features/my-feature/tasks/T3.yaml"], "modified": [], "removed": []}]
 	}`)
@@ -162,6 +176,9 @@ func TestParsePushEvent(t *testing.T) {
 	}
 	if ev.Ref != "refs/heads/feature/my-feature-T3" {
 		t.Errorf("unexpected Ref: %q", ev.Ref)
+	}
+	if ev.After != "abc123" {
+		t.Errorf("unexpected After: %q", ev.After)
 	}
 	if ev.Repository.FullName != "owner/repo" {
 		t.Errorf("unexpected FullName: %q", ev.Repository.FullName)

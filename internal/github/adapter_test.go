@@ -229,11 +229,34 @@ func TestParseFeatureStatusYAML(t *testing.T) {
 	if fs.Title != "Alpha Feature" {
 		t.Errorf("expected title 'Alpha Feature', got %q", fs.Title)
 	}
-	if fs.Status != "in_implementation" {
-		t.Errorf("expected status 'in_implementation', got %q", fs.Status)
+	if fs.featureStatus() != "in_implementation" {
+		t.Errorf("expected status 'in_implementation', got %q", fs.featureStatus())
+	}
+	if fs.currentStage() != "in_implementation" {
+		t.Errorf("expected current stage 'in_implementation', got %q", fs.currentStage())
 	}
 	if len(fs.History) != 2 {
 		t.Errorf("expected 2 history entries, got %d", len(fs.History))
+	}
+}
+
+func TestParseFeatureStatusYAMLWorkspaceSchema(t *testing.T) {
+	data := fixture(t, "status_workspace_schema.yaml")
+	fs, se := parseFeatureStatusYAML(data, "docs/features/runtime-portable-architecture/status.yaml")
+	if se != nil {
+		t.Fatalf("unexpected error: %v", se)
+	}
+	if got := fs.featureID(); got != "runtime-portable-architecture" {
+		t.Errorf("featureID: got %q", got)
+	}
+	if got := fs.featureStatus(); got != "ready_for_implementation" {
+		t.Errorf("featureStatus: got %q", got)
+	}
+	if got := fs.currentStage(); got != "implementation" {
+		t.Errorf("currentStage: got %q", got)
+	}
+	if fs.Stages["product_spec"] == nil {
+		t.Errorf("expected product_spec stage to be parsed")
 	}
 }
 
@@ -446,7 +469,7 @@ func TestImportWorkspaceSuccess(t *testing.T) {
 	if task.Status != "done" {
 		t.Errorf("expected task status 'done', got %q", task.Status)
 	}
-	// Documents: status_yaml should always be present; optional docs may not be present.
+	// Documents: status_yaml should be present when the file exists; optional docs may not be present.
 	var hasStatusDoc bool
 	for _, doc := range feat.Documents {
 		if doc.DocumentType == "status_yaml" {
@@ -835,13 +858,16 @@ func TestDiscoverFeatureIDs(t *testing.T) {
 	entries := []treeEntry{
 		{Path: "docs/features/alpha-feature/status.yaml", Type: "blob"},
 		{Path: "docs/features/beta-feature/status.yaml", Type: "blob"},
+		{Path: "docs/features/beta-feature/status.yaml", Type: "blob"},
 		{Path: "docs/features/alpha-feature/product-spec.md", Type: "blob"},
+		{Path: "docs/features/gamma-feature/product-spec.md", Type: "blob"},
+		{Path: "docs/features/delta-feature/technical-design.md", Type: "blob"},
 		{Path: "workspace.yaml", Type: "blob"},
-		{Path: "docs/features/gamma-tree", Type: "tree"}, // tree, not blob — ignored
+		{Path: "docs/features/epsilon-tree", Type: "tree"}, // tree, not blob — ignored
 	}
 	ids := discoverFeatureIDs(entries)
-	if len(ids) != 2 {
-		t.Errorf("expected 2 feature IDs, got %d: %v", len(ids), ids)
+	if len(ids) != 4 {
+		t.Errorf("expected 4 feature IDs, got %d: %v", len(ids), ids)
 	}
 }
 
@@ -853,7 +879,8 @@ func TestExtractFeatureID(t *testing.T) {
 	}{
 		{"docs/features/alpha-feature/status.yaml", "alpha-feature", true},
 		{"docs/features/beta/status.yaml", "beta", true},
-		{"docs/features/alpha-feature/product-spec.md", "", false},
+		{"docs/features/alpha-feature/product-spec.md", "alpha-feature", true},
+		{"docs/features/alpha-feature/technical-design.md", "alpha-feature", true},
 		{"workspace.yaml", "", false},
 		{"docs/features/alpha/tasks/T1.yaml", "", false},
 	}

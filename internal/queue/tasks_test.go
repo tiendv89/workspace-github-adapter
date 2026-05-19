@@ -12,6 +12,8 @@ func TestNewTaskSyncTask_Serialization(t *testing.T) {
 		WorkspaceID: "ws-123",
 		FeatureID:   "workspace-data-backend",
 		TaskID:      "T7",
+		Branch:      "feature/workspace-data-backend-T7",
+		CommitSHA:   "abc123",
 	}
 	task, err := queue.NewTaskSyncTask(payload)
 	if err != nil {
@@ -33,6 +35,12 @@ func TestNewTaskSyncTask_Serialization(t *testing.T) {
 	}
 	if got.TaskID != payload.TaskID {
 		t.Errorf("TaskID: got %q, want %q", got.TaskID, payload.TaskID)
+	}
+	if got.Branch != payload.Branch {
+		t.Errorf("Branch: got %q, want %q", got.Branch, payload.Branch)
+	}
+	if got.CommitSHA != payload.CommitSHA {
+		t.Errorf("CommitSHA: got %q, want %q", got.CommitSHA, payload.CommitSHA)
 	}
 }
 

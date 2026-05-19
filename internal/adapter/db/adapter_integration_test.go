@@ -73,7 +73,12 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 				Title:        "My Feature",
 				Status:       "in_design",
 				CurrentStage: "product_spec",
-				SourcePath:   "docs/features/my-feature/status.yaml",
+				Stages: map[string]interface{}{
+					"product_spec": map[string]interface{}{
+						"review_status": "draft",
+					},
+				},
+				SourcePath: "docs/features/my-feature/status.yaml",
 				Documents: []domain.DocumentSnapshot{
 					{
 						DocumentType: "product_spec",
@@ -150,6 +155,12 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 	if feat.FeatureID != "my-feature" {
 		t.Errorf("FeatureID: got %q", feat.FeatureID)
 	}
+	if feat.Status != "in_design" {
+		t.Errorf("Status: got %q", feat.Status)
+	}
+	if feat.CurrentStage != "product_spec" {
+		t.Errorf("CurrentStage: got %q", feat.CurrentStage)
+	}
 	if len(feat.Documents) != 1 {
 		t.Errorf("expected 1 document, got %d", len(feat.Documents))
 	}
@@ -212,6 +223,15 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 	}
 	if len(snap2.Features) != 1 {
 		t.Errorf("expected 1 feature in snapshot, got %d", len(snap2.Features))
+	}
+	if snap2.Features[0].Status != "in_design" {
+		t.Errorf("snapshot feature Status: got %q", snap2.Features[0].Status)
+	}
+	if snap2.Features[0].CurrentStage != "product_spec" {
+		t.Errorf("snapshot feature CurrentStage: got %q", snap2.Features[0].CurrentStage)
+	}
+	if snap2.Features[0].Stages["product_spec"] == nil {
+		t.Errorf("expected snapshot feature stages to round-trip")
 	}
 }
 

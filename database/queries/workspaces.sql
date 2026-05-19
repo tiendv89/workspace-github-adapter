@@ -33,3 +33,13 @@ ON CONFLICT (id) DO UPDATE SET
     branch_pattern     = EXCLUDED.branch_pattern,
     updated_at         = now()
 RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at;
+
+-- name: UpdateWorkspaceByID :one
+UPDATE workspaces
+SET slug               = $2,
+    name               = $3,
+    management_repo_id = $4,
+    branch_pattern     = $5,
+    updated_at         = now()
+WHERE id = $1
+RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at;

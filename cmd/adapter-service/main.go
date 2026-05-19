@@ -318,7 +318,7 @@ func (h *serviceHandler) internalWorkspaceHandler(w http.ResponseWriter, r *http
 
 // webhookHandler processes GitHub push event webhooks.
 // It verifies the HMAC signature, parses the push payload, and routes based on branch:
-//   - base branch → enqueue targeted workspace:sync for each touched feature
+//   - base branch → enqueue full workspace reconciliation
 //   - feature branch → enqueue targeted workspace:sync for that feature
 //   - task branch → enqueue task:sync with dedup
 //   - other → 200 OK, ignored
@@ -370,14 +370,11 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 		return
 
 	case webhook.BranchBase:
-		featureIDs := webhook.TouchedFeatureIDs(ev)
-		for _, fid := range featureIDs {
-			go h.enqueueTargetedSync(wsInfo, fid, branch)
-		}
+		go h.enqueueFullSync(wsInfo, branch)
 		writeJSON(w, http.StatusOK, map[string]string{
-			"status":           "queued",
-			"branch_kind":      "base",
-			"features_touched": fmt.Sprintf("%d", len(featureIDs)),
+			"status":      "queued",
+			"branch_kind": "base",
+			"mode":        "full",
 		})
 
 	case webhook.BranchFeature:
@@ -389,7 +386,7 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 		})
 
 	case webhook.BranchTask:
-		if err := h.enqueueTaskSync(wsInfo.workspaceID, info.FeatureID, info.TaskID); err != nil {
+		if err := h.enqueueTaskSync(wsInfo.workspaceID, info.FeatureID, info.TaskID, branch, ev.After); err != nil {
 			log.Printf("webhook: enqueue task sync failed workspace=%s feature=%s task=%s: %v",
 				wsInfo.workspaceID, info.FeatureID, info.TaskID, err)
 		}
@@ -433,6 +430,28 @@ func (h *serviceHandler) findWorkspaceByRepoURL(ctx context.Context, repoURL str
 	}, nil
 }
 
+// enqueueFullSync enqueues a full workspace:sync reconciliation for the base branch.
+// It runs in a goroutine so the webhook handler returns immediately.
+func (h *serviceHandler) enqueueFullSync(ws *workspaceWebhookInfo, branch string) {
+	payload := queue.WorkspaceSyncPayload{
+		WorkspaceID:   ws.workspaceID,
+		RepoURL:       ws.repoURL,
+		DefaultBranch: ws.defaultBranch,
+		Ref:           branch,
+		Trigger:       "webhook_base",
+		Mode:          "full",
+	}
+	task, err := queue.NewWorkspaceSyncTask(payload)
+	if err != nil {
+		log.Printf("enqueueFullSync: build task error: %v", err)
+		return
+	}
+	if _, err := h.queue.Enqueue(task); err != nil {
+		log.Printf("enqueueFullSync: enqueue error workspace=%s branch=%s: %v",
+			ws.workspaceID, branch, err)
+	}
+}
+
 // enqueueTargetedSync enqueues a workspace:sync task with mode=targeted for a single feature.
 // It runs in a goroutine so the webhook handler returns immediately.
 func (h *serviceHandler) enqueueTargetedSync(ws *workspaceWebhookInfo, featureID, branch string) {
@@ -457,11 +476,13 @@ func (h *serviceHandler) enqueueTargetedSync(ws *workspaceWebhookInfo, featureID
 }
 
 // enqueueTaskSync enqueues a task:sync job with deduplication.
-func (h *serviceHandler) enqueueTaskSync(workspaceID, featureID, taskID string) error {
+func (h *serviceHandler) enqueueTaskSync(workspaceID, featureID, taskID, branch, commitSHA string) error {
 	payload := queue.TaskSyncPayload{
 		WorkspaceID: workspaceID,
 		FeatureID:   featureID,
 		TaskID:      taskID,
+		Branch:      branch,
+		CommitSHA:   commitSHA,
 	}
 	task, err := queue.NewTaskSyncTask(payload)
 	if err != nil {

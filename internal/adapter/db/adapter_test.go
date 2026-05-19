@@ -94,7 +94,7 @@ func TestRowToTaskSummary(t *testing.T) {
 	blocked := "waiting for dep"
 
 	row := database.WorkspaceTask{
-		TaskID:        "T1",
+		TaskName:      "T1",
 		FeatureName:   "my-feature",
 		Title:         "Test Task",
 		Status:        &status,
@@ -104,12 +104,16 @@ func TestRowToTaskSummary(t *testing.T) {
 		DependsOn:     json.RawMessage(`["T0"]`),
 	}
 	_ = row.ID.Scan("550e8400-e29b-41d4-a716-446655440010")
+	_ = row.TaskID.Scan("550e8400-e29b-41d4-a716-446655440011")
 	_ = row.FeatureID.Scan("550e8400-e29b-41d4-a716-446655440020")
 
 	got := db.ExportedRowToTaskSummary(row)
 
-	if got.TaskID != "T1" {
+	if got.TaskID != "550e8400-e29b-41d4-a716-446655440011" {
 		t.Errorf("TaskID: got %q", got.TaskID)
+	}
+	if got.TaskName != "T1" {
+		t.Errorf("TaskName: got %q", got.TaskName)
 	}
 	if got.Status != "in_progress" {
 		t.Errorf("Status: got %q", got.Status)
@@ -126,7 +130,7 @@ func TestRowToTaskSummary(t *testing.T) {
 func TestRowToTaskSummary_NoBlocked(t *testing.T) {
 	status := "ready"
 	row := database.WorkspaceTask{
-		TaskID:      "T2",
+		TaskName:    "T2",
 		FeatureName: "feat",
 		Title:       "Ready Task",
 		Status:      &status,
@@ -260,10 +264,11 @@ func TestDeriveSourceStateThreshold(t *testing.T) {
 // TestRowToFeatureSummary verifies feature summary task count aggregation.
 func TestRowToFeatureSummary(t *testing.T) {
 	feat := database.WorkspaceFeature{
-		FeatureID: "feat-1",
-		Title:     "Feature One",
-		UpdatedAt: pgtype.Timestamptz{Valid: true, Time: time.Now()},
+		FeatureName: "feat-1",
+		Title:       "Feature One",
+		UpdatedAt:   pgtype.Timestamptz{Valid: true, Time: time.Now()},
 	}
+	_ = feat.FeatureID.Scan("550e8400-e29b-41d4-a716-446655440021")
 	inProgress := "in_progress"
 	done := "done"
 	blocked := "blocked"

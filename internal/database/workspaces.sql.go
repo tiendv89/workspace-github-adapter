@@ -159,3 +159,42 @@ func (q *Queries) UpsertWorkspaceByID(ctx context.Context, arg UpsertWorkspaceBy
 	)
 	return i, err
 }
+
+const updateWorkspaceByID = `-- name: UpdateWorkspaceByID :one
+UPDATE workspaces
+SET slug               = $2,
+    name               = $3,
+    management_repo_id = $4,
+    branch_pattern     = $5,
+    updated_at         = now()
+WHERE id = $1
+RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at`
+
+type UpdateWorkspaceByIDParams struct {
+	ID               pgtype.UUID
+	Slug             string
+	Name             string
+	ManagementRepoID string
+	BranchPattern    *string
+}
+
+func (q *Queries) UpdateWorkspaceByID(ctx context.Context, arg UpdateWorkspaceByIDParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, updateWorkspaceByID,
+		arg.ID,
+		arg.Slug,
+		arg.Name,
+		arg.ManagementRepoID,
+		arg.BranchPattern,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.ManagementRepoID,
+		&i.BranchPattern,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

@@ -30,7 +30,8 @@ type WorkspaceRepo struct {
 type WorkspaceFeature struct {
 	ID            pgtype.UUID        `db:"id" json:"id"`
 	WorkspaceID   pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
-	FeatureID     string             `db:"feature_id" json:"feature_id"`
+	FeatureID     pgtype.UUID        `db:"feature_id" json:"feature_id"`
+	FeatureName   string             `db:"feature_name" json:"feature_name"`
 	Title         string             `db:"title" json:"title"`
 	FeatureStatus *string            `db:"feature_status" json:"feature_status"`
 	CurrentStage  *string            `db:"current_stage" json:"current_stage"`
@@ -59,7 +60,8 @@ type WorkspaceTask struct {
 	WorkspaceID   pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
 	FeatureID     pgtype.UUID        `db:"feature_id" json:"feature_id"`
 	FeatureName   string             `db:"feature_name" json:"feature_name"`
-	TaskID        string             `db:"task_id" json:"task_id"`
+	TaskID        pgtype.UUID        `db:"task_id" json:"task_id"`
+	TaskName      string             `db:"task_name" json:"task_name"`
 	Title         string             `db:"title" json:"title"`
 	Repo          *string            `db:"repo" json:"repo"`
 	Status        *string            `db:"status" json:"status"`
@@ -106,8 +108,8 @@ type WorkspaceSyncRun struct {
 	WorkspaceID  pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
 	Trigger      string             `db:"trigger" json:"trigger"`
 	Branch       *string            `db:"branch" json:"branch"`
-	FeatureID    *string            `db:"feature_id" json:"feature_id"`
-	TaskID       *string            `db:"task_id" json:"task_id"`
+	FeatureID    pgtype.UUID        `db:"feature_id" json:"feature_id"`
+	TaskID       pgtype.UUID        `db:"task_id" json:"task_id"`
 	Mode         string             `db:"mode" json:"mode"`
 	Status       string             `db:"status" json:"status"`
 	CommitSha    *string            `db:"commit_sha" json:"commit_sha"`

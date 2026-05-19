@@ -16,7 +16,8 @@ import (
 
 // PushEvent is the subset of a GitHub push event payload that adapter-service needs.
 type PushEvent struct {
-	Ref        string   `json:"ref"`
+	Ref        string     `json:"ref"`
+	After      string     `json:"after"`
 	Repository Repository `json:"repository"`
 	Commits    []Commit   `json:"commits"`
 }
@@ -39,10 +40,10 @@ type Commit struct {
 type BranchKind int
 
 const (
-	BranchIgnored     BranchKind = iota
-	BranchBase                   // base branch (e.g. "main")
-	BranchFeature                // feature/<feature-id>
-	BranchTask                   // feature/<feature-id>-T<n>
+	BranchIgnored BranchKind = iota
+	BranchBase               // base branch (e.g. "main")
+	BranchFeature            // feature/<feature-id>
+	BranchTask               // feature/<feature-id>-T<n>
 )
 
 // BranchInfo contains the parsed branch information.

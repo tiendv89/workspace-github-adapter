@@ -53,12 +53,12 @@ const listFeatureActivityEvents = `-- name: ListFeatureActivityEvents :many
 SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
        occurred_at, note, sequence, raw_event, created_at
 FROM workspace_activity_events
-WHERE workspace_id = $1 AND feature_name = $2
+WHERE workspace_id = $1 AND feature_id = $2
 ORDER BY occurred_at DESC, sequence DESC`
 
 type ListFeatureActivityEventsParams struct {
 	WorkspaceID pgtype.UUID
-	FeatureID   string
+	FeatureID   pgtype.UUID
 }
 
 func (q *Queries) ListFeatureActivityEvents(ctx context.Context, arg ListFeatureActivityEventsParams) ([]WorkspaceActivityEvent, error) {
@@ -98,13 +98,13 @@ const listTaskActivityEvents = `-- name: ListTaskActivityEvents :many
 SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
        occurred_at, note, sequence, raw_event, created_at
 FROM workspace_activity_events
-WHERE workspace_id = $1 AND feature_name = $2 AND task_name = $3
+WHERE workspace_id = $1 AND feature_id = $2 AND task_id = $3
 ORDER BY sequence`
 
 type ListTaskActivityEventsParams struct {
 	WorkspaceID pgtype.UUID
-	FeatureID   string
-	TaskID      string
+	FeatureID   pgtype.UUID
+	TaskID      pgtype.UUID
 }
 
 func (q *Queries) ListTaskActivityEvents(ctx context.Context, arg ListTaskActivityEventsParams) ([]WorkspaceActivityEvent, error) {

@@ -10,7 +10,7 @@ import (
 )
 
 const listWorkspaceFeatures = `-- name: ListWorkspaceFeatures :many
-SELECT id, workspace_id, feature_id, title, feature_status, current_stage, next_action,
+SELECT id, workspace_id, feature_id, feature_name, title, feature_status, current_stage, next_action,
        stages, source_path, source_hash, created_at, updated_at
 FROM workspace_features
 WHERE workspace_id = $1
@@ -29,6 +29,7 @@ func (q *Queries) ListWorkspaceFeatures(ctx context.Context, workspaceID pgtype.
 			&i.ID,
 			&i.WorkspaceID,
 			&i.FeatureID,
+			&i.FeatureName,
 			&i.Title,
 			&i.FeatureStatus,
 			&i.CurrentStage,
@@ -50,14 +51,14 @@ func (q *Queries) ListWorkspaceFeatures(ctx context.Context, workspaceID pgtype.
 }
 
 const getWorkspaceFeature = `-- name: GetWorkspaceFeature :one
-SELECT id, workspace_id, feature_id, title, feature_status, current_stage, next_action,
+SELECT id, workspace_id, feature_id, feature_name, title, feature_status, current_stage, next_action,
        stages, source_path, source_hash, created_at, updated_at
 FROM workspace_features
 WHERE workspace_id = $1 AND feature_id = $2`
 
 type GetWorkspaceFeatureParams struct {
 	WorkspaceID pgtype.UUID
-	FeatureID   string
+	FeatureID   pgtype.UUID
 }
 
 func (q *Queries) GetWorkspaceFeature(ctx context.Context, arg GetWorkspaceFeatureParams) (WorkspaceFeature, error) {
@@ -67,6 +68,7 @@ func (q *Queries) GetWorkspaceFeature(ctx context.Context, arg GetWorkspaceFeatu
 		&i.ID,
 		&i.WorkspaceID,
 		&i.FeatureID,
+		&i.FeatureName,
 		&i.Title,
 		&i.FeatureStatus,
 		&i.CurrentStage,
@@ -81,12 +83,19 @@ func (q *Queries) GetWorkspaceFeature(ctx context.Context, arg GetWorkspaceFeatu
 }
 
 const upsertWorkspaceFeature = `-- name: UpsertWorkspaceFeature :one
+WITH feature_input AS (
+    SELECT COALESCE(
+        (SELECT id FROM workspace_features WHERE workspace_id = $1 AND feature_name = $2),
+        gen_random_uuid()
+    ) AS feature_uuid
+)
 INSERT INTO workspace_features (
-    workspace_id, feature_id, title, feature_status, current_stage, next_action,
+    id, workspace_id, feature_id, feature_name, title, feature_status, current_stage, next_action,
     stages, source_path, source_hash, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
-ON CONFLICT (workspace_id, feature_id) DO UPDATE SET
+SELECT feature_uuid, $1, feature_uuid, $2, $3, $4, $5, $6, $7, $8, $9, now(), now()
+FROM feature_input
+ON CONFLICT (workspace_id, feature_name) DO UPDATE SET
     title          = EXCLUDED.title,
     feature_status = EXCLUDED.feature_status,
     current_stage  = EXCLUDED.current_stage,
@@ -95,12 +104,12 @@ ON CONFLICT (workspace_id, feature_id) DO UPDATE SET
     source_path    = EXCLUDED.source_path,
     source_hash    = EXCLUDED.source_hash,
     updated_at     = now()
-RETURNING id, workspace_id, feature_id, title, feature_status, current_stage, next_action,
+RETURNING id, workspace_id, feature_id, feature_name, title, feature_status, current_stage, next_action,
           stages, source_path, source_hash, created_at, updated_at`
 
 type UpsertWorkspaceFeatureParams struct {
 	WorkspaceID   pgtype.UUID
-	FeatureID     string
+	FeatureName   string
 	Title         string
 	FeatureStatus *string
 	CurrentStage  *string
@@ -113,7 +122,7 @@ type UpsertWorkspaceFeatureParams struct {
 func (q *Queries) UpsertWorkspaceFeature(ctx context.Context, arg UpsertWorkspaceFeatureParams) (WorkspaceFeature, error) {
 	row := q.db.QueryRow(ctx, upsertWorkspaceFeature,
 		arg.WorkspaceID,
-		arg.FeatureID,
+		arg.FeatureName,
 		arg.Title,
 		arg.FeatureStatus,
 		arg.CurrentStage,
@@ -127,6 +136,7 @@ func (q *Queries) UpsertWorkspaceFeature(ctx context.Context, arg UpsertWorkspac
 		&i.ID,
 		&i.WorkspaceID,
 		&i.FeatureID,
+		&i.FeatureName,
 		&i.Title,
 		&i.FeatureStatus,
 		&i.CurrentStage,
@@ -143,14 +153,14 @@ func (q *Queries) UpsertWorkspaceFeature(ctx context.Context, arg UpsertWorkspac
 const deleteWorkspaceFeaturesNotIn = `-- name: DeleteWorkspaceFeaturesNotIn :exec
 DELETE FROM workspace_features
 WHERE workspace_id = $1
-  AND feature_id != ALL($2::text[])`
+  AND feature_name != ALL($2::text[])`
 
 type DeleteWorkspaceFeaturesNotInParams struct {
-	WorkspaceID pgtype.UUID
-	FeatureIds  []string
+	WorkspaceID  pgtype.UUID
+	FeatureNames []string
 }
 
 func (q *Queries) DeleteWorkspaceFeaturesNotIn(ctx context.Context, arg DeleteWorkspaceFeaturesNotInParams) error {
-	_, err := q.db.Exec(ctx, deleteWorkspaceFeaturesNotIn, arg.WorkspaceID, arg.FeatureIds)
+	_, err := q.db.Exec(ctx, deleteWorkspaceFeaturesNotIn, arg.WorkspaceID, arg.FeatureNames)
 	return err
 }

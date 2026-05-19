@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 )
 
 func TestDeriveBranch(t *testing.T) {
@@ -20,5 +22,18 @@ func TestDeriveBranch(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("deriveBranch(%q, %q, %q) = %q, want %q", tc.pattern, tc.featureID, tc.taskID, got, tc.want)
 		}
+	}
+}
+
+func TestTaskSyncBranch_PrefersWebhookBranch(t *testing.T) {
+	payload := queue.TaskSyncPayload{
+		FeatureID: "test-webhook-19-05",
+		TaskID:    "T1",
+		Branch:    "feature/test-webhook-19-05-T1",
+	}
+
+	got := taskSyncBranch(payload, "feature/{feature_id}")
+	if got != "feature/test-webhook-19-05-T1" {
+		t.Errorf("taskSyncBranch() = %q, want webhook task branch", got)
 	}
 }

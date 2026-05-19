@@ -58,13 +58,16 @@ type gitYAML struct {
 
 // featureStatusYAML mirrors the relevant fields from docs/features/*/status.yaml.
 type featureStatusYAML struct {
-	Feature    string                 `yaml:"feature"`
-	Title      string                 `yaml:"title"`
-	Status     string                 `yaml:"status"`
-	Stage      string                 `yaml:"stage"`
-	NextAction string                 `yaml:"next_action"`
-	History    []activityYAML         `yaml:"history"`
-	Stages     map[string]interface{} `yaml:"stages"`
+	Feature       string                 `yaml:"feature"`
+	FeatureID     string                 `yaml:"feature_id"`
+	Title         string                 `yaml:"title"`
+	Status        string                 `yaml:"status"`
+	FeatureStatus string                 `yaml:"feature_status"`
+	Stage         string                 `yaml:"stage"`
+	CurrentStage  string                 `yaml:"current_stage"`
+	NextAction    string                 `yaml:"next_action"`
+	History       []activityYAML         `yaml:"history"`
+	Stages        map[string]interface{} `yaml:"stages"`
 }
 
 type activityYAML struct {
@@ -123,20 +126,48 @@ func parseTaskYAML(data []byte, sourcePath string) (*taskYAML, *domain.SourceErr
 	return &t, nil
 }
 
+func (f *featureStatusYAML) featureID() string {
+	return firstNonEmpty(f.FeatureID, f.Feature)
+}
+
+func (f *featureStatusYAML) featureStatus() string {
+	return firstNonEmpty(f.FeatureStatus, f.Status)
+}
+
+func (f *featureStatusYAML) currentStage() string {
+	return firstNonEmpty(f.CurrentStage, f.Stage)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 // hashContent returns a hex SHA-256 of the given bytes for change detection.
 func hashContent(data []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-// extractFeatureID returns the feature ID from a status.yaml path.
-// Path format: docs/features/<feature-id>/status.yaml
-func extractFeatureID(statusPath string) (string, bool) {
-	parts := strings.Split(statusPath, "/")
-	// expected: ["docs", "features", "<feature-id>", "status.yaml"]
-	if len(parts) != 4 || parts[0] != "docs" || parts[1] != "features" || parts[3] != "status.yaml" {
+// extractFeatureID returns the feature ID from a recognized feature document path.
+// Path formats:
+//   - docs/features/<feature-id>/status.yaml
+//   - docs/features/<feature-id>/product-spec.md
+//   - docs/features/<feature-id>/technical-design.md
+func extractFeatureID(featureDocPath string) (string, bool) {
+	parts := strings.Split(featureDocPath, "/")
+	if len(parts) != 4 || parts[0] != "docs" || parts[1] != "features" || parts[2] == "" {
 		return "", false
 	}
-	return parts[2], true
+	switch parts[3] {
+	case "status.yaml", "product-spec.md", "technical-design.md":
+		return parts[2], true
+	default:
+		return "", false
+	}
 }
 
 // featureDocPaths returns the expected paths for all feature documents.

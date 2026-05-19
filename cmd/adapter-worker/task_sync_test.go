@@ -16,11 +16,15 @@ import (
 
 // stubGitHub implements domain.GitHubWorkspaceAdapter for testing.
 type stubGitHub struct {
-	fetchTask func(ctx context.Context, repoURL, taskBranch, featureID, taskID string) (*domain.TaskSnapshot, error)
-	fetchFeat func(ctx context.Context, repoURL, ref, featureID string) (*domain.FeatureSnapshot, error)
+	importWorkspace func(ctx context.Context, in domain.ImportInput) (*domain.WorkspaceSnapshot, error)
+	fetchTask       func(ctx context.Context, repoURL, taskBranch, featureID, taskID string) (*domain.TaskSnapshot, error)
+	fetchFeat       func(ctx context.Context, repoURL, ref, featureID string) (*domain.FeatureSnapshot, error)
 }
 
-func (s *stubGitHub) ImportWorkspace(_ context.Context, _ domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+func (s *stubGitHub) ImportWorkspace(ctx context.Context, in domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+	if s.importWorkspace != nil {
+		return s.importWorkspace(ctx, in)
+	}
 	return nil, errors.New("not implemented in stub")
 }
 func (s *stubGitHub) SyncWorkspace(_ context.Context, _, _, _ string) (*domain.WorkspaceSnapshot, error) {
@@ -41,6 +45,7 @@ func (s *stubGitHub) FetchTask(ctx context.Context, repoURL, taskBranch, feature
 
 // stubDB implements domain.DbWorkspaceAdapter for testing.
 type stubDB struct {
+	saveSnap     func(ctx context.Context, workspaceID string, snap *domain.WorkspaceSnapshot) error
 	saveTaskSnap func(ctx context.Context, workspaceID string, snap domain.TaskSnapshot) error
 	saveFeatSnap func(ctx context.Context, workspaceID string, snap domain.FeatureSnapshot) error
 }
@@ -63,7 +68,10 @@ func (s *stubDB) ListFeatureTasks(_ context.Context, _, _ string) ([]domain.Task
 func (s *stubDB) ListActivity(_ context.Context, _ string, _ domain.ActivityScope) ([]domain.ActivityEvent, error) {
 	return nil, nil
 }
-func (s *stubDB) SaveSnapshot(_ context.Context, _ string, _ *domain.WorkspaceSnapshot) error {
+func (s *stubDB) SaveSnapshot(ctx context.Context, workspaceID string, snap *domain.WorkspaceSnapshot) error {
+	if s.saveSnap != nil {
+		return s.saveSnap(ctx, workspaceID, snap)
+	}
 	return nil
 }
 func (s *stubDB) SaveFeatureSnapshot(ctx context.Context, workspaceID string, snap domain.FeatureSnapshot) error {
@@ -102,6 +110,41 @@ func TestHandleTaskSync_BadPayload(t *testing.T) {
 	err := h.handleTaskSync(context.Background(), task)
 	if err == nil {
 		t.Fatal("expected error for bad payload")
+	}
+}
+
+func TestHandleWorkspaceSync_MissingWorkspaceIDDoesNotCreateWorkspace(t *testing.T) {
+	githubCalled := false
+	saveCalled := false
+	h := &handler{
+		db: &stubDB{
+			saveSnap: func(context.Context, string, *domain.WorkspaceSnapshot) error {
+				saveCalled = true
+				return nil
+			},
+		},
+		github: &stubGitHub{
+			importWorkspace: func(context.Context, domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+				githubCalled = true
+				return &domain.WorkspaceSnapshot{Name: "Test", Slug: "test"}, nil
+			},
+		},
+	}
+	payload := queue.WorkspaceSyncPayload{RepoURL: "https://github.com/acme/repo"}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal workspace sync payload: %v", err)
+	}
+
+	err = h.handleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
+	if !errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("expected SkipRetry for missing workspace_id, got %v", err)
+	}
+	if githubCalled {
+		t.Fatal("expected GitHub import not to be called")
+	}
+	if saveCalled {
+		t.Fatal("expected snapshot not to be saved")
 	}
 }
 

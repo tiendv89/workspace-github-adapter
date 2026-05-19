@@ -21,8 +21,8 @@ type InsertSyncRunParams struct {
 	WorkspaceID  pgtype.UUID
 	Trigger      string
 	Branch       *string
-	FeatureID    *string
-	TaskID       *string
+	FeatureID    pgtype.UUID
+	TaskID       pgtype.UUID
 	Mode         string
 	Status       string
 	CommitSha    *string

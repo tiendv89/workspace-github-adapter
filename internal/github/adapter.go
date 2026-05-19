@@ -253,40 +253,54 @@ func (a *Adapter) fetchFeature(ctx context.Context, c *client, owner, repo, ref,
 	docPaths := featureDocPaths(featureID)
 	statusPath := docPaths["status_yaml"]
 
-	// status.yaml is required — if missing, emit a source error.
-	statusData, err := c.getFileContent(ctx, owner, repo, statusPath, ref)
-	if err != nil {
-		errs = append(errs, asSourceError(err, statusPath))
-		return nil, errs
+	// A webhook/PR may introduce or update only one feature artifact (for example,
+	// product-spec.md or technical-design.md). Treat status.yaml as optional for
+	// discovery and targeted sync; parse it when present, otherwise build a minimal
+	// feature snapshot from the available document path(s).
+	var status *featureStatusYAML
+	var statusData []byte
+	if _, exists := pathSet[statusPath]; exists {
+		var err error
+		statusData, err = c.getFileContent(ctx, owner, repo, statusPath, ref)
+		if err != nil {
+			errs = append(errs, asSourceError(err, statusPath))
+			return nil, errs
+		}
+		if statusData != nil {
+			var parseErr *domain.SourceError
+			status, parseErr = parseFeatureStatusYAML(statusData, statusPath)
+			if parseErr != nil {
+				errs = append(errs, *parseErr)
+				return nil, errs
+			}
+		}
 	}
-	if statusData == nil {
+
+	// Build document links for whichever recognized docs exist in the tree.
+	docs := []domain.DocumentSnapshot{}
+	primarySourcePath := ""
+	for docType, docPath := range docPaths {
+		if _, exists := pathSet[docPath]; !exists {
+			continue
+		}
+		docs = append(docs, domain.DocumentSnapshot{
+			DocumentType: docType,
+			SourcePath:   docPath,
+			URL:          buildWebURL(owner, repo, ref, docPath),
+		})
+		if primarySourcePath == "" || docType == "status_yaml" {
+			primarySourcePath = docPath
+		}
+	}
+	if len(docs) == 0 {
 		errs = append(errs, domain.SourceError{
 			Code:      domain.ErrGitHubNotFound,
-			Message:   fmt.Sprintf("required file not found: %s", statusPath),
+			Message:   fmt.Sprintf("no recognized feature documents found for %s", featureID),
 			Source:    domain.ErrorSourceGitHub,
 			Retryable: false,
-			Path:      statusPath,
+			Path:      "docs/features/" + featureID,
 		})
 		return nil, errs
-	}
-
-	status, parseErr := parseFeatureStatusYAML(statusData, statusPath)
-	if parseErr != nil {
-		errs = append(errs, *parseErr)
-		return nil, errs
-	}
-
-	// Build document links — only status.yaml has required content; the rest are optional.
-	docs := []domain.DocumentSnapshot{}
-	for docType, docPath := range docPaths {
-		_, exists := pathSet[docPath]
-		if exists || docType == "status_yaml" {
-			docs = append(docs, domain.DocumentSnapshot{
-				DocumentType: docType,
-				SourcePath:   docPath,
-				URL:          buildWebURL(owner, repo, ref, docPath),
-			})
-		}
 	}
 
 	// Fetch all task YAMLs for this feature.
@@ -318,17 +332,36 @@ func (a *Adapter) fetchFeature(ctx context.Context, c *client, owner, repo, ref,
 		taskSnapshots = append(taskSnapshots, taskSnap)
 	}
 
-	// Map feature history to activity events.
-	activity := mapActivityLog(status.History, "feature", featureID, "")
+	featureIDValue := featureID
+	title := featureID
+	featureStatus := ""
+	currentStage := ""
+	nextAction := ""
+	stages := map[string]interface{}{}
+	var activity []domain.ActivityEvent
+	sourceHash := ""
+	if status != nil {
+		featureIDValue = firstNonEmpty(status.featureID(), featureID)
+		title = firstNonEmpty(status.Title, featureIDValue)
+		featureStatus = status.featureStatus()
+		currentStage = status.currentStage()
+		nextAction = status.NextAction
+		if status.Stages != nil {
+			stages = status.Stages
+		}
+		activity = mapActivityLog(status.History, "feature", featureIDValue, "")
+		sourceHash = hashContent(statusData)
+	}
 
 	return &domain.FeatureSnapshot{
-		FeatureID:    featureID,
-		Title:        status.Title,
-		Status:       status.Status,
-		CurrentStage: status.Stage,
-		NextAction:   status.NextAction,
-		SourcePath:   statusPath,
-		SourceHash:   hashContent(statusData),
+		FeatureID:    featureIDValue,
+		Title:        title,
+		Status:       featureStatus,
+		CurrentStage: currentStage,
+		NextAction:   nextAction,
+		Stages:       stages,
+		SourcePath:   primarySourcePath,
+		SourceHash:   sourceHash,
 		Documents:    docs,
 		Tasks:        taskSnapshots,
 		Activity:     activity,
@@ -360,8 +393,8 @@ func mapTaskSnapshot(t *taskYAML, featureID, taskID, sourcePath string, rawData 
 	}
 }
 
-// discoverFeatureIDs scans the tree entries for docs/features/*/status.yaml paths
-// and returns the unique feature IDs found.
+// discoverFeatureIDs scans the tree entries for recognized docs/features/* artifacts
+// (status.yaml, product-spec.md, technical-design.md) and returns the unique feature IDs found.
 func discoverFeatureIDs(entries []treeEntry) []string {
 	seen := make(map[string]struct{})
 	var ids []string

@@ -140,10 +140,17 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 	if err != nil {
 		return nil, err
 	}
+	f, featureUUID, err := a.resolveFeature(ctx, uid, featureID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "feature not found: "+featureID)
+		}
+		return nil, err
+	}
 
-	f, err := a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{
+	f, err = a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{
 		WorkspaceID: uid,
-		FeatureID:   featureID,
+		FeatureID:   featureUUID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -154,7 +161,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 
 	docs, err := a.q.ListFeatureDocuments(ctx, database.ListFeatureDocumentsParams{
 		WorkspaceID: uid,
-		FeatureID:   featureID,
+		FeatureID:   featureUUID,
 	})
 	if err != nil {
 		return nil, dbErr("list feature documents", err)
@@ -162,7 +169,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 
 	tasks, err := a.q.ListFeatureTasks(ctx, database.ListFeatureTasksParams{
 		WorkspaceID: uid,
-		FeatureID:   featureID,
+		FeatureID:   featureUUID,
 	})
 	if err != nil {
 		return nil, dbErr("list feature tasks", err)
@@ -170,7 +177,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 
 	actEvents, err := a.q.ListFeatureActivityEvents(ctx, database.ListFeatureActivityEventsParams{
 		WorkspaceID: uid,
-		FeatureID:   featureID,
+		FeatureID:   featureUUID,
 	})
 	if err != nil {
 		return nil, dbErr("list feature activity", err)
@@ -219,11 +226,25 @@ func (a *Adapter) GetTask(ctx context.Context, workspaceID, featureID, taskID st
 	if err != nil {
 		return nil, err
 	}
+	_, featureUUID, err := a.resolveFeature(ctx, uid, featureID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "feature not found: "+featureID)
+		}
+		return nil, err
+	}
+	t, taskUUID, err := a.resolveTask(ctx, uid, featureUUID, taskID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "task not found: "+taskID)
+		}
+		return nil, err
+	}
 
-	t, err := a.q.GetWorkspaceTask(ctx, database.GetWorkspaceTaskParams{
+	t, err = a.q.GetWorkspaceTask(ctx, database.GetWorkspaceTaskParams{
 		WorkspaceID: uid,
-		FeatureID:   featureID,
-		TaskID:      taskID,
+		FeatureID:   featureUUID,
+		TaskID:      taskUUID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -234,8 +255,8 @@ func (a *Adapter) GetTask(ctx context.Context, workspaceID, featureID, taskID st
 
 	actEvents, _ := a.q.ListTaskActivityEvents(ctx, database.ListTaskActivityEventsParams{ //nolint:errcheck
 		WorkspaceID: uid,
-		FeatureID:   featureID,
-		TaskID:      taskID,
+		FeatureID:   featureUUID,
+		TaskID:      taskUUID,
 	})
 
 	activity := make([]domain.ActivityEvent, 0, len(actEvents))
@@ -258,10 +279,17 @@ func (a *Adapter) ListFeatureTasks(ctx context.Context, workspaceID, featureID s
 	if err != nil {
 		return nil, err
 	}
+	_, featureUUID, err := a.resolveFeature(ctx, uid, featureID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "feature not found: "+featureID)
+		}
+		return nil, err
+	}
 
 	tasks, err := a.q.ListFeatureTasks(ctx, database.ListFeatureTasksParams{
 		WorkspaceID: uid,
-		FeatureID:   featureID,
+		FeatureID:   featureUUID,
 	})
 	if err != nil {
 		return nil, dbErr("list feature tasks", err)
@@ -286,15 +314,27 @@ func (a *Adapter) ListActivity(ctx context.Context, workspaceID string, scope do
 
 	switch {
 	case scope.FeatureID != "" && scope.TaskID != "":
+		_, featureUUID, err := a.resolveFeature(ctx, uid, scope.FeatureID)
+		if err != nil {
+			return nil, err
+		}
+		_, taskUUID, err := a.resolveTask(ctx, uid, featureUUID, scope.TaskID)
+		if err != nil {
+			return nil, err
+		}
 		rows, queryErr = a.q.ListTaskActivityEvents(ctx, database.ListTaskActivityEventsParams{
 			WorkspaceID: uid,
-			FeatureID:   scope.FeatureID,
-			TaskID:      scope.TaskID,
+			FeatureID:   featureUUID,
+			TaskID:      taskUUID,
 		})
 	case scope.FeatureID != "":
+		_, featureUUID, err := a.resolveFeature(ctx, uid, scope.FeatureID)
+		if err != nil {
+			return nil, err
+		}
 		rows, queryErr = a.q.ListFeatureActivityEvents(ctx, database.ListFeatureActivityEventsParams{
 			WorkspaceID: uid,
-			FeatureID:   scope.FeatureID,
+			FeatureID:   featureUUID,
 		})
 	default:
 		rows, queryErr = a.q.ListActivityEvents(ctx, uid)
@@ -311,11 +351,17 @@ func (a *Adapter) ListActivity(ctx context.Context, workspaceID string, scope do
 	return out, nil
 }
 
-// SaveSnapshot upserts all core tables from the given snapshot inside a single transaction.
+// SaveSnapshot updates an existing workspace and upserts its child rows inside a single transaction.
 func (a *Adapter) SaveSnapshot(ctx context.Context, workspaceID string, snapshot *domain.WorkspaceSnapshot) error {
 	uid, err := parseUUID(workspaceID)
 	if err != nil {
 		return err
+	}
+	if _, err := a.q.GetWorkspace(ctx, uid); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.NewDatabaseError(domain.ErrDatabaseNotFound, "workspace not found: "+workspaceID)
+		}
+		return dbErr("get workspace before save snapshot", err)
 	}
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -356,18 +402,27 @@ func (a *Adapter) SaveTaskSnapshot(ctx context.Context, workspaceID string, snap
 		return err
 	}
 
-	// Resolve the feature UUID by string feature_id using a raw query.
-	var featureUUID pgtype.UUID
-	err = a.pool.QueryRow(ctx,
-		`SELECT id FROM workspace_features WHERE workspace_id = $1 AND feature_id = $2`,
-		uid, snap.FeatureID,
-	).Scan(&featureUUID)
+	_, featureUUID, err := a.resolveFeature(ctx, uid, snap.FeatureID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.NewDatabaseError(domain.ErrDatabaseNotFound,
-				"feature not found for task sync: "+snap.FeatureID)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return dbErr("get feature for task sync", err)
 		}
-		return dbErr("get feature for task sync", err)
+
+		// A task webhook can arrive before the feature branch/full workspace sync
+		// has materialized the parent feature row. In GitHub payloads, feature_id
+		// is the human-readable feature name; create a minimal feature row and let
+		// later feature/workspace sync enrich it while preserving UUID references.
+		feature, err := a.q.UpsertWorkspaceFeature(ctx, database.UpsertWorkspaceFeatureParams{
+			WorkspaceID: uid,
+			FeatureName: snap.FeatureID,
+			Title:       snap.FeatureID,
+			Stages:      json.RawMessage("[]"),
+			SourcePath:  snap.SourcePath,
+		})
+		if err != nil {
+			return fmt.Errorf("upsert placeholder feature for task sync %s: %w", snap.FeatureID, err)
+		}
+		featureUUID = feature.ID
 	}
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -431,7 +486,7 @@ func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*d
 
 	featureSnapshots := make([]domain.FeatureSnapshot, 0, len(features))
 	for _, f := range features {
-		fs := buildFeatureSnapshotFromBatch(f, docsByFeature[f.FeatureID], tasksByFeature[f.FeatureID])
+		fs := buildFeatureSnapshotFromBatch(f, docsByFeature[f.FeatureName], tasksByFeature[f.FeatureName])
 		featureSnapshots = append(featureSnapshots, fs)
 	}
 
@@ -483,17 +538,17 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, s
 	if mgmtRepoID == "" {
 		mgmtRepoID = "management-repo"
 	}
-	// Sync updates the existing workspace by ID. Import placeholders may have been
-	// created with a different slug, so using slug as the conflict target can hit
-	// workspaces_pkey before PostgreSQL gets a chance to update the row.
-	_, err := q.UpsertWorkspaceByID(ctx, database.UpsertWorkspaceByIDParams{
+	_, err := q.UpdateWorkspaceByID(ctx, database.UpdateWorkspaceByIDParams{
 		ID:               uid,
 		Slug:             snap.Slug,
 		Name:             snap.Name,
 		ManagementRepoID: mgmtRepoID,
 	})
 	if err != nil {
-		return fmt.Errorf("upsert workspace: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.NewDatabaseError(domain.ErrDatabaseNotFound, "workspace not found: "+uuidStr(uid))
+		}
+		return fmt.Errorf("update workspace: %w", err)
 	}
 
 	// Upsert repos.
@@ -526,8 +581,8 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, s
 		featureIDs = append(featureIDs, f.FeatureID)
 	}
 	if err := q.DeleteWorkspaceFeaturesNotIn(ctx, database.DeleteWorkspaceFeaturesNotInParams{
-		WorkspaceID: uid,
-		FeatureIds:  featureIDs,
+		WorkspaceID:  uid,
+		FeatureNames: featureIDs,
 	}); err != nil {
 		return fmt.Errorf("delete stale features: %w", err)
 	}
@@ -536,10 +591,13 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, s
 }
 
 func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, f domain.FeatureSnapshot) error {
-	stages, _ := json.Marshal(nil) //nolint:errcheck
+	stages, err := json.Marshal(f.Stages)
+	if err != nil {
+		return fmt.Errorf("marshal stages for feature %s: %w", f.FeatureID, err)
+	}
 	featureRow, err := q.UpsertWorkspaceFeature(ctx, database.UpsertWorkspaceFeatureParams{
 		WorkspaceID:   uid,
-		FeatureID:     f.FeatureID,
+		FeatureName:   f.FeatureID,
 		Title:         f.Title,
 		FeatureStatus: ptrStr(f.Status),
 		CurrentStage:  ptrStr(f.CurrentStage),
@@ -587,7 +645,7 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 	if err := q.DeleteFeatureTasksNotIn(ctx, database.DeleteFeatureTasksNotInParams{
 		WorkspaceID: uid,
 		FeatureID:   featureRow.ID,
-		TaskIds:     taskIDs,
+		TaskNames:   taskIDs,
 	}); err != nil {
 		return fmt.Errorf("delete stale tasks for %s: %w", f.FeatureID, err)
 	}
@@ -610,7 +668,7 @@ func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUI
 		WorkspaceID:   uid,
 		FeatureID:     featureUUID,
 		FeatureName:   featureName,
-		TaskID:        t.TaskID,
+		TaskName:      t.TaskID,
 		Title:         t.Title,
 		Repo:          ptrStr(t.Repo),
 		Status:        ptrStr(t.Status),
@@ -706,7 +764,7 @@ func buildFeatureSnapshotFromBatch(f database.WorkspaceFeature, docs []database.
 	}
 
 	fs := domain.FeatureSnapshot{
-		FeatureID:  f.FeatureID,
+		FeatureID:  f.FeatureName,
 		Title:      f.Title,
 		SourcePath: f.SourcePath,
 		Documents:  docSnaps,
@@ -721,6 +779,12 @@ func buildFeatureSnapshotFromBatch(f database.WorkspaceFeature, docs []database.
 	if f.NextAction != nil {
 		fs.NextAction = *f.NextAction
 	}
+	if len(f.Stages) > 0 {
+		var stages map[string]interface{}
+		if err := json.Unmarshal(f.Stages, &stages); err == nil {
+			fs.Stages = stages
+		}
+	}
 	if f.SourceHash != nil {
 		fs.SourceHash = *f.SourceHash
 	}
@@ -730,7 +794,7 @@ func buildFeatureSnapshotFromBatch(f database.WorkspaceFeature, docs []database.
 // rowToTaskSnapshot converts a database row to a domain.TaskSnapshot.
 func rowToTaskSnapshot(t database.WorkspaceTask) domain.TaskSnapshot {
 	ts := domain.TaskSnapshot{
-		TaskID:     t.TaskID,
+		TaskID:     t.TaskName,
 		FeatureID:  t.FeatureName,
 		Title:      t.Title,
 		SourcePath: t.SourcePath,
@@ -773,7 +837,7 @@ func rowToTaskSnapshot(t database.WorkspaceTask) domain.TaskSnapshot {
 func rowToFeatureSummary(f database.WorkspaceFeature, tasks []database.WorkspaceTask) domain.FeatureSummary {
 	counts := domain.TaskCounts{}
 	for _, t := range tasks {
-		if t.FeatureName != f.FeatureID {
+		if t.FeatureName != f.FeatureName {
 			continue
 		}
 		counts.Total++
@@ -795,11 +859,12 @@ func rowToFeatureSummary(f database.WorkspaceFeature, tasks []database.Workspace
 	}
 
 	fs := domain.FeatureSummary{
-		ID:         uuidStr(f.ID),
-		FeatureID:  f.FeatureID,
-		Title:      f.Title,
-		UpdatedAt:  f.UpdatedAt.Time,
-		TaskCounts: counts,
+		ID:          uuidStr(f.ID),
+		FeatureID:   uuidStr(f.FeatureID),
+		FeatureName: f.FeatureName,
+		Title:       f.Title,
+		UpdatedAt:   f.UpdatedAt.Time,
+		TaskCounts:  counts,
 	}
 	if f.FeatureStatus != nil {
 		fs.Status = *f.FeatureStatus
@@ -814,7 +879,8 @@ func rowToFeatureSummary(f database.WorkspaceFeature, tasks []database.Workspace
 func rowToTaskSummary(t database.WorkspaceTask) domain.TaskSummary {
 	ts := domain.TaskSummary{
 		ID:          uuidStr(t.ID),
-		TaskID:      t.TaskID,
+		TaskID:      uuidStr(t.TaskID),
+		TaskName:    t.TaskName,
 		FeatureID:   uuidStr(t.FeatureID),
 		FeatureName: t.FeatureName,
 		Title:       t.Title,
@@ -910,11 +976,66 @@ func githubRepoURL(ctx context.Context, q *database.Queries, uid pgtype.UUID) st
 	return src.RepoURL
 }
 
-// parseUUID parses a plain UUID string into pgtype.UUID.
+// parseUUID parses a workspace UUID string into pgtype.UUID.
 func parseUUID(s string) (pgtype.UUID, error) {
+	return parseUUIDField(s, "workspace_id")
+}
+
+func (a *Adapter) resolveFeature(ctx context.Context, workspaceID pgtype.UUID, featureIdentifier string) (database.WorkspaceFeature, pgtype.UUID, error) {
+	if featureUUID, err := parseUUIDField(featureIdentifier, "feature_id"); err == nil {
+		feature, err := a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{
+			WorkspaceID: workspaceID,
+			FeatureID:   featureUUID,
+		})
+		if err == nil {
+			return feature, feature.ID, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return database.WorkspaceFeature{}, pgtype.UUID{}, dbErr("get feature", err)
+		}
+	}
+
+	feature, err := a.q.GetWorkspaceFeatureByName(ctx, database.GetWorkspaceFeatureByNameParams{
+		WorkspaceID: workspaceID,
+		FeatureName: strings.TrimSpace(featureIdentifier),
+	})
+	if err != nil {
+		return database.WorkspaceFeature{}, pgtype.UUID{}, err
+	}
+	return feature, feature.ID, nil
+}
+
+func (a *Adapter) resolveTask(ctx context.Context, workspaceID, featureID pgtype.UUID, taskIdentifier string) (database.WorkspaceTask, pgtype.UUID, error) {
+	if taskUUID, err := parseUUIDField(taskIdentifier, "task_id"); err == nil {
+		task, err := a.q.GetWorkspaceTask(ctx, database.GetWorkspaceTaskParams{
+			WorkspaceID: workspaceID,
+			FeatureID:   featureID,
+			TaskID:      taskUUID,
+		})
+		if err == nil {
+			return task, task.ID, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return database.WorkspaceTask{}, pgtype.UUID{}, dbErr("get task", err)
+		}
+	}
+
+	task, err := a.q.GetWorkspaceTaskByName(ctx, database.GetWorkspaceTaskByNameParams{
+		WorkspaceID: workspaceID,
+		FeatureID:   featureID,
+		TaskName:    strings.TrimSpace(taskIdentifier),
+	})
+	if err != nil {
+		return database.WorkspaceTask{}, pgtype.UUID{}, err
+	}
+	return task, task.ID, nil
+}
+
+// parseUUIDField parses a UUID string into pgtype.UUID with a field-specific validation error.
+func parseUUIDField(s, field string) (pgtype.UUID, error) {
 	var uid pgtype.UUID
 	if err := uid.Scan(s); err != nil {
-		return pgtype.UUID{}, domain.NewValidationError(domain.ErrValidationMissingInput, "invalid workspace id: "+s)
+		return pgtype.UUID{}, domain.NewValidationError(domain.ErrValidationMissingInput, "invalid "+field+": "+s)
 	}
 	return uid, nil
 }

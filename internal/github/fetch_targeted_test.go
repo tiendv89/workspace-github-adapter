@@ -143,8 +143,9 @@ func TestFetchFeature_Success(t *testing.T) {
 	}
 }
 
-// TestFetchFeature_MissingStatus verifies that a missing status.yaml returns an error.
-func TestFetchFeature_MissingStatus(t *testing.T) {
+// TestFetchFeature_NoRecognizedFeatureDocs verifies that a feature with none of the
+// recognized docs (status.yaml, product-spec.md, technical-design.md) returns an error.
+func TestFetchFeature_NoRecognizedFeatureDocs(t *testing.T) {
 	treePaths := []string{"workspace.yaml"} // no feature files
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +168,51 @@ func TestFetchFeature_MissingStatus(t *testing.T) {
 	adapter := newFetchAdapter(t, proxyTransport(srv.URL))
 	snap, err := adapter.FetchFeature(context.Background(), "https://github.com/owner/repo", "main", "alpha-feature")
 	if err == nil {
-		t.Fatalf("expected error for missing status.yaml, got snap: %+v", snap)
+		t.Fatalf("expected error for missing recognized feature docs, got snap: %+v", snap)
+	}
+}
+
+// TestFetchFeature_ProductSpecOnly verifies that status.yaml is not mandatory for a
+// webhook-targeted feature sync when another recognized feature artifact exists.
+func TestFetchFeature_ProductSpecOnly(t *testing.T) {
+	treePaths := []string{
+		"workspace.yaml",
+		"docs/features/alpha-feature/product-spec.md",
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/commits/main"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(commitJSON("sha-product-only")))
+		case strings.Contains(path, "/git/trees/"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(treeJSON(treePaths)))
+		default:
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	adapter := newFetchAdapter(t, proxyTransport(srv.URL))
+	snap, err := adapter.FetchFeature(context.Background(), "https://github.com/owner/repo", "main", "alpha-feature")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if snap.FeatureID != "alpha-feature" {
+		t.Errorf("expected FeatureID=alpha-feature, got %q", snap.FeatureID)
+	}
+	if snap.Title != "alpha-feature" {
+		t.Errorf("expected fallback title alpha-feature, got %q", snap.Title)
+	}
+	if snap.SourcePath != "docs/features/alpha-feature/product-spec.md" {
+		t.Errorf("expected product-spec source path, got %q", snap.SourcePath)
+	}
+	if len(snap.Documents) != 1 || snap.Documents[0].DocumentType != "product_spec" {
+		t.Fatalf("expected only product_spec document, got %+v", snap.Documents)
 	}
 }
 

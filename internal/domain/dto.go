@@ -56,6 +56,7 @@ type WorkspaceDetail struct {
 type FeatureSummary struct {
 	ID           string     `json:"id"`
 	FeatureID    string     `json:"feature_id"`
+	FeatureName  string     `json:"feature_name"`
 	Title        string     `json:"title"`
 	Status       string     `json:"status"`
 	CurrentStage string     `json:"current_stage,omitempty"`
@@ -94,6 +95,7 @@ type FeatureDetail struct {
 type TaskSummary struct {
 	ID            string `json:"id"`
 	TaskID        string `json:"task_id"`
+	TaskName      string `json:"task_name"`
 	FeatureID     string `json:"feature_id"`
 	FeatureName   string `json:"feature_name"`
 	Title         string `json:"title"`
@@ -159,6 +161,7 @@ type FeatureSnapshot struct {
 	Status       string
 	CurrentStage string
 	NextAction   string
+	Stages       map[string]interface{}
 	SourcePath   string
 	SourceHash   string
 	Documents    []DocumentSnapshot
