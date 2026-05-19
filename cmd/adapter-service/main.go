@@ -367,7 +367,7 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	info := webhook.ClassifyBranch(branch, wsInfo.defaultBranch)
+	info := webhook.ClassifyBranch(branch, wsInfo.defaultBranch, wsInfo.branchPattern)
 	switch info.Kind {
 	case webhook.BranchIgnored:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored", "branch": branch})
@@ -409,7 +409,7 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 		})
 
 	case webhook.BranchTask:
-		if err := h.enqueueTaskSync(wsInfo.workspaceID, info.FeatureID, info.TaskID, branch, ev.After); err != nil {
+		if err := h.enqueueTaskSync(wsInfo.workspaceID, info.FeatureID, info.TaskID); err != nil {
 			log.Printf("webhook: enqueue task sync failed workspace=%s feature=%s task=%s: %v",
 				wsInfo.workspaceID, info.FeatureID, info.TaskID, err)
 			http.Error(w, "enqueue task sync failed", http.StatusServiceUnavailable)
@@ -446,6 +446,7 @@ type workspaceWebhookInfo struct {
 	workspaceID   string
 	repoURL       string
 	defaultBranch string
+	branchPattern string
 }
 
 // findWorkspaceByRepoURL queries the DB for a workspace matching the given repo URL.
@@ -465,10 +466,19 @@ func (h *serviceHandler) findWorkspaceByRepoURL(ctx context.Context, repoURL str
 	if src.DefaultBranch != nil && *src.DefaultBranch != "" {
 		defaultBranch = *src.DefaultBranch
 	}
+	ws, err := h.q.GetWorkspace(ctx, src.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("get webhook workspace: %w", err)
+	}
+	branchPattern := ""
+	if ws.BranchPattern != nil {
+		branchPattern = *ws.BranchPattern
+	}
 	return &workspaceWebhookInfo{
 		workspaceID:   uuidString(src.WorkspaceID),
 		repoURL:       src.RepoURL,
 		defaultBranch: defaultBranch,
+		branchPattern: branchPattern,
 	}, nil
 }
 
@@ -510,13 +520,11 @@ func (h *serviceHandler) enqueueWorkspaceSync(payload queue.WorkspaceSyncPayload
 }
 
 // enqueueTaskSync enqueues a task:sync job with deduplication.
-func (h *serviceHandler) enqueueTaskSync(workspaceID, featureID, taskID, branch, commitSHA string) error {
+func (h *serviceHandler) enqueueTaskSync(workspaceID, featureID, taskID string) error {
 	payload := queue.TaskSyncPayload{
 		WorkspaceID: workspaceID,
 		FeatureID:   featureID,
 		TaskID:      taskID,
-		Branch:      branch,
-		CommitSHA:   commitSHA,
 	}
 	task, err := queue.NewTaskSyncTask(payload)
 	if err != nil {

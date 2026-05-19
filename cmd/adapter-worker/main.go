@@ -246,8 +246,8 @@ func (h *handler) handleTargetedSync(ctx context.Context, payload queue.Workspac
 }
 
 // handleTaskSync processes task:sync jobs from the task-sync queue.
-// It fetches the pushed task branch from the webhook payload, falling back to
-// workspace branch_pattern only for legacy queued jobs.
+// It derives the source branch from workspace branch_pattern at drain time so
+// duplicate webhook events always fetch the latest task branch HEAD.
 func (h *handler) handleTaskSync(ctx context.Context, t *asynq.Task) error {
 	var payload queue.TaskSyncPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
@@ -301,9 +301,6 @@ func (h *handler) handleTaskSync(ctx context.Context, t *asynq.Task) error {
 }
 
 func taskSyncBranch(payload queue.TaskSyncPayload, pattern string) string {
-	if branch := strings.TrimSpace(payload.Branch); branch != "" {
-		return branch
-	}
 	return deriveBranch(pattern, payload.FeatureID, payload.TaskID)
 }
 
@@ -339,8 +336,7 @@ func (h *handler) recordTaskSyncSuccess(ctx context.Context, payload queue.TaskS
 		return err
 	}
 	_, err = h.q.UpdateSyncRunSuccess(ctx, database.UpdateSyncRunSuccessParams{
-		ID:        runID,
-		CommitSha: stringPtr(payload.CommitSHA),
+		ID: runID,
 	})
 	if err != nil {
 		return fmt.Errorf("update task sync run success: %w", err)
@@ -396,7 +392,6 @@ func (h *handler) ensureTaskSyncRun(ctx context.Context, payload queue.TaskSyncP
 		TaskID:       taskUUID,
 		Mode:         "task",
 		Status:       "running",
-		CommitSha:    stringPtr(payload.CommitSHA),
 		ChangedPaths: []byte("[]"),
 	})
 	if err != nil {
@@ -432,13 +427,6 @@ func (h *handler) syncRunReferenceIDs(ctx context.Context, workspaceID pgtype.UU
 	}
 	taskUUID = task.ID
 	return featureUUID, taskUUID, nil
-}
-
-func stringPtr(s string) *string {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	return &s
 }
 
 func (h *handler) upsertGitHubSource(ctx context.Context, workspaceID, repoURL, defaultBranch string) error {

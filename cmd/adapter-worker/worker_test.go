@@ -25,15 +25,14 @@ func TestDeriveBranch(t *testing.T) {
 	}
 }
 
-func TestTaskSyncBranch_PrefersWebhookBranch(t *testing.T) {
+func TestTaskSyncBranch_DerivesFromPattern(t *testing.T) {
 	payload := queue.TaskSyncPayload{
 		FeatureID: "test-webhook-19-05",
 		TaskID:    "T1",
-		Branch:    "feature/test-webhook-19-05-T1",
 	}
 
-	got := taskSyncBranch(payload, "feature/{feature_id}")
-	if got != "feature/test-webhook-19-05-T1" {
-		t.Errorf("taskSyncBranch() = %q, want webhook task branch", got)
+	got := taskSyncBranch(payload, "task/{feature_id}/{work_id}")
+	if got != "task/test-webhook-19-05/T1" {
+		t.Errorf("taskSyncBranch() = %q, want derived branch", got)
 	}
 }

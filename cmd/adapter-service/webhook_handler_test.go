@@ -198,6 +198,78 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 	}
 }
 
+func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
+	secret := "mysecret"
+	enqueuer := &recordingEnqueuer{}
+	h := &serviceHandler{
+		q: database.New(&webhookSourceDB{
+			src:       testGitHubSource(t),
+			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
+		}),
+		queue:         enqueuer,
+		webhookSecret: secret,
+	}
+	body := []byte(`{
+		"ref":"refs/heads/workspaces/workspace-data-backend/tasks/T7",
+		"after":"abc123",
+		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
+		"commits":[{"modified":["docs/features/workspace-data-backend/tasks/T7.yaml"]}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	rec := httptest.NewRecorder()
+
+	h.webhookHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(enqueuer.taskSyncs) != 1 {
+		t.Fatalf("expected 1 task sync, got %d: %+v", len(enqueuer.taskSyncs), enqueuer.taskSyncs)
+	}
+	got := enqueuer.taskSyncs[0]
+	if got.FeatureID != "workspace-data-backend" || got.TaskID != "T7" {
+		t.Fatalf("task sync payload = %+v, want feature workspace-data-backend task T7", got)
+	}
+}
+
+func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
+	secret := "mysecret"
+	enqueuer := &recordingEnqueuer{}
+	h := &serviceHandler{
+		q: database.New(&webhookSourceDB{
+			src:       testGitHubSource(t),
+			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
+		}),
+		queue:         enqueuer,
+		webhookSecret: secret,
+	}
+	body := []byte(`{
+		"ref":"refs/heads/workspaces/workspace-data-backend",
+		"after":"abc123",
+		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
+		"commits":[{"modified":["docs/features/workspace-data-backend/tasks.md"]}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	rec := httptest.NewRecorder()
+
+	h.webhookHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(enqueuer.workspaceSyncs) != 1 {
+		t.Fatalf("expected 1 workspace sync, got %d: %+v", len(enqueuer.workspaceSyncs), enqueuer.workspaceSyncs)
+	}
+	got := enqueuer.workspaceSyncs[0]
+	if got.FeatureID != "workspace-data-backend" || got.Mode != "targeted" || got.Trigger != "webhook_feature" {
+		t.Fatalf("workspace sync payload = %+v, want targeted webhook_feature for workspace-data-backend", got)
+	}
+}
+
 // TestIsDedupeError verifies dedupe error detection.
 func TestIsDedupeError_Match(t *testing.T) {
 	err := &fakeError{"task already exists"}
@@ -251,7 +323,8 @@ func (e *recordingEnqueuer) Enqueue(task *asynq.Task, _ ...asynq.Option) (*asynq
 }
 
 type webhookSourceDB struct {
-	src database.WorkspaceGitHubSource
+	src       database.WorkspaceGitHubSource
+	workspace database.Workspace
 }
 
 func (db *webhookSourceDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -262,7 +335,14 @@ func (db *webhookSourceDB) Query(context.Context, string, ...interface{}) (pgx.R
 	return nil, errors.New("not implemented")
 }
 
-func (db *webhookSourceDB) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+func (db *webhookSourceDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+	if strings.Contains(query, "FROM workspaces") {
+		ws := db.workspace
+		if !ws.ID.Valid {
+			ws = testWorkspaceFromSource(db.src, "")
+		}
+		return webhookWorkspaceRow{workspace: ws}
+	}
 	return webhookSourceRow{src: db.src}
 }
 
@@ -301,6 +381,40 @@ func (r webhookSourceRow) Scan(dest ...any) error {
 	return nil
 }
 
+type webhookWorkspaceRow struct {
+	workspace database.Workspace
+}
+
+func (r webhookWorkspaceRow) Scan(dest ...any) error {
+	values := []any{
+		r.workspace.ID,
+		r.workspace.Slug,
+		r.workspace.Name,
+		r.workspace.ManagementRepoID,
+		r.workspace.BranchPattern,
+		r.workspace.CreatedAt,
+		r.workspace.UpdatedAt,
+	}
+	if len(dest) != len(values) {
+		return fmt.Errorf("expected %d scan destinations, got %d", len(values), len(dest))
+	}
+	for i := range dest {
+		switch d := dest[i].(type) {
+		case *pgtype.UUID:
+			*d = values[i].(pgtype.UUID)
+		case *string:
+			*d = values[i].(string)
+		case **string:
+			*d = values[i].(*string)
+		case *pgtype.Timestamptz:
+			*d = values[i].(pgtype.Timestamptz)
+		default:
+			return fmt.Errorf("unsupported scan destination %T", dest[i])
+		}
+	}
+	return nil
+}
+
 func testGitHubSource(t *testing.T) database.WorkspaceGitHubSource {
 	t.Helper()
 	workspaceID := mustPGUUID(t, "11111111-1111-1111-1111-111111111111")
@@ -313,6 +427,30 @@ func testGitHubSource(t *testing.T) database.WorkspaceGitHubSource {
 		RepoOwner:     "acme",
 		RepoName:      "workspace",
 		DefaultBranch: &defaultBranch,
+	}
+}
+
+func testWorkspace(t *testing.T, branchPattern string) database.Workspace {
+	t.Helper()
+	workspaceID := mustPGUUID(t, "11111111-1111-1111-1111-111111111111")
+	return testWorkspaceFromID(workspaceID, branchPattern)
+}
+
+func testWorkspaceFromSource(src database.WorkspaceGitHubSource, branchPattern string) database.Workspace {
+	return testWorkspaceFromID(src.WorkspaceID, branchPattern)
+}
+
+func testWorkspaceFromID(workspaceID pgtype.UUID, branchPattern string) database.Workspace {
+	var branchPatternPtr *string
+	if branchPattern != "" {
+		branchPatternPtr = &branchPattern
+	}
+	return database.Workspace{
+		ID:               workspaceID,
+		Slug:             "workspace",
+		Name:             "Workspace",
+		ManagementRepoID: "management-repo",
+		BranchPattern:    branchPatternPtr,
 	}
 }
 

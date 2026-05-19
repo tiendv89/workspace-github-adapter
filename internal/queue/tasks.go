@@ -31,16 +31,12 @@ type WorkspaceSyncPayload struct {
 }
 
 // TaskSyncPayload is the payload for a task:sync job enqueued on task-branch webhook events.
-// Branch carries the exact pushed task branch. It is optional for backward compatibility
-// with older queued jobs, where the worker falls back to workspace branch_pattern.
-// CommitSHA makes asynq Unique dedupe apply to a specific pushed commit instead of
-// suppressing later pushes to the same task branch.
+// Keep this payload limited to the source task identity because asynq.Unique
+// derives its dedupe key from the full task payload.
 type TaskSyncPayload struct {
 	WorkspaceID string `json:"workspace_id"`
 	FeatureID   string `json:"feature_id"`
 	TaskID      string `json:"task_id"`
-	Branch      string `json:"branch,omitempty"`
-	CommitSHA   string `json:"commit_sha,omitempty"`
 }
 
 // NewWorkspaceSyncTask creates an asynq task for syncing/importing a workspace from GitHub.
@@ -53,7 +49,7 @@ func NewWorkspaceSyncTask(payload WorkspaceSyncPayload) (*asynq.Task, error) {
 }
 
 // NewTaskSyncTask creates an asynq task:sync job for a task-branch webhook event.
-// It uses Unique(24h) for deduplication of the same pushed commit.
+// It uses Unique(24h) for one pending job per workspace/feature/task.
 func NewTaskSyncTask(payload TaskSyncPayload) (*asynq.Task, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {

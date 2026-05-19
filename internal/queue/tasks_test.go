@@ -2,6 +2,7 @@ package queue_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/queue"
@@ -12,8 +13,6 @@ func TestNewTaskSyncTask_Serialization(t *testing.T) {
 		WorkspaceID: "ws-123",
 		FeatureID:   "workspace-data-backend",
 		TaskID:      "T7",
-		Branch:      "feature/workspace-data-backend-T7",
-		CommitSHA:   "abc123",
 	}
 	task, err := queue.NewTaskSyncTask(payload)
 	if err != nil {
@@ -36,11 +35,14 @@ func TestNewTaskSyncTask_Serialization(t *testing.T) {
 	if got.TaskID != payload.TaskID {
 		t.Errorf("TaskID: got %q, want %q", got.TaskID, payload.TaskID)
 	}
-	if got.Branch != payload.Branch {
-		t.Errorf("Branch: got %q, want %q", got.Branch, payload.Branch)
-	}
-	if got.CommitSHA != payload.CommitSHA {
-		t.Errorf("CommitSHA: got %q, want %q", got.CommitSHA, payload.CommitSHA)
+}
+
+func TestTaskSyncPayload_DedupeKeyFieldsOnly(t *testing.T) {
+	payloadType := reflect.TypeOf(queue.TaskSyncPayload{})
+	for _, fieldName := range []string{"Branch", "CommitSHA"} {
+		if _, ok := payloadType.FieldByName(fieldName); ok {
+			t.Fatalf("TaskSyncPayload must not include %s because asynq.Unique keys include the full payload", fieldName)
+		}
 	}
 }
 

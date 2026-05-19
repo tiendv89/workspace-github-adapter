@@ -54,14 +54,12 @@ type BranchInfo struct {
 	TaskID    string
 }
 
-// featureBranchRe matches "feature/<feature-id>" (no task suffix).
-var featureBranchRe = regexp.MustCompile(`^feature/([^/]+)$`)
-
-// taskBranchRe matches "feature/<feature-id>-T<n>".
-var taskBranchRe = regexp.MustCompile(`^feature/(.+)-(T\d+)$`)
-
 // featurePathRe matches docs/features/<feature-id>/ path prefixes.
 var featurePathRe = regexp.MustCompile(`^docs/features/([^/]+)/`)
+
+const defaultBranchPattern = "feature/{feature_id}-{work_id}"
+
+var workIDRe = regexp.MustCompile(`^T\d+$`)
 
 // VerifySignature checks the X-Hub-Signature-256 header against the request body.
 // Returns an error if the signature is missing or invalid.
@@ -112,20 +110,103 @@ func BranchFromRef(ref string) string {
 }
 
 // ClassifyBranch returns the BranchKind and parsed identifiers for the given branch name.
-func ClassifyBranch(branch, baseBranch string) BranchInfo {
+func ClassifyBranch(branch, baseBranch string, branchPatterns ...string) BranchInfo {
 	if branch == "" {
 		return BranchInfo{Kind: BranchIgnored}
 	}
 	if branch == baseBranch {
 		return BranchInfo{Kind: BranchBase, Branch: branch}
 	}
-	if m := taskBranchRe.FindStringSubmatch(branch); m != nil {
-		return BranchInfo{Kind: BranchTask, Branch: branch, FeatureID: m[1], TaskID: m[2]}
+
+	branchPattern := defaultBranchPattern
+	if len(branchPatterns) > 0 && strings.TrimSpace(branchPatterns[0]) != "" {
+		branchPattern = strings.TrimSpace(branchPatterns[0])
 	}
-	if m := featureBranchRe.FindStringSubmatch(branch); m != nil {
-		return BranchInfo{Kind: BranchFeature, Branch: branch, FeatureID: m[1]}
+
+	if info, ok := classifyByPattern(branch, branchPattern, true); ok {
+		return info
+	}
+	if featurePattern := featurePatternFromTaskPattern(branchPattern); featurePattern != "" {
+		if info, ok := classifyByPattern(branch, featurePattern, false); ok {
+			return info
+		}
 	}
 	return BranchInfo{Kind: BranchIgnored, Branch: branch}
+}
+
+func classifyByPattern(branch, pattern string, task bool) (BranchInfo, bool) {
+	re, names, ok := branchPatternRegexp(pattern)
+	if !ok {
+		return BranchInfo{}, false
+	}
+	matches := re.FindStringSubmatch(branch)
+	if matches == nil {
+		return BranchInfo{}, false
+	}
+	values := map[string]string{}
+	for i, name := range names {
+		values[name] = matches[i+1]
+	}
+	info := BranchInfo{Branch: branch, FeatureID: values["feature_id"]}
+	if task {
+		info.Kind = BranchTask
+		info.TaskID = values["work_id"]
+		if info.FeatureID == "" || info.TaskID == "" {
+			return BranchInfo{}, false
+		}
+		if !workIDRe.MatchString(info.TaskID) {
+			return BranchInfo{}, false
+		}
+		return info, true
+	}
+	info.Kind = BranchFeature
+	if info.FeatureID == "" {
+		return BranchInfo{}, false
+	}
+	return info, true
+}
+
+func branchPatternRegexp(pattern string) (*regexp.Regexp, []string, bool) {
+	var b strings.Builder
+	var names []string
+	for i := 0; i < len(pattern); {
+		switch {
+		case strings.HasPrefix(pattern[i:], "{feature_id}"):
+			b.WriteString("(.+)")
+			names = append(names, "feature_id")
+			i += len("{feature_id}")
+		case strings.HasPrefix(pattern[i:], "{work_id}"):
+			b.WriteString("([^/]+)")
+			names = append(names, "work_id")
+			i += len("{work_id}")
+		default:
+			b.WriteString(regexp.QuoteMeta(pattern[i : i+1]))
+			i++
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil, false
+	}
+	return regexp.MustCompile("^" + b.String() + "$"), names, true
+}
+
+func featurePatternFromTaskPattern(pattern string) string {
+	idx := strings.Index(pattern, "{work_id}")
+	if idx < 0 {
+		return ""
+	}
+	prefix := pattern[:idx]
+	prefix = strings.TrimRight(prefix, "/-_.")
+	if slash := strings.LastIndex(prefix, "/"); slash >= 0 {
+		tail := prefix[slash+1:]
+		if !strings.Contains(tail, "{feature_id}") {
+			prefix = prefix[:slash]
+		}
+	}
+	if !strings.Contains(prefix, "{feature_id}") {
+		return ""
+	}
+	return prefix
 }
 
 // TouchedFeatureIDs extracts unique feature IDs from docs/features/<feature-id>/ paths

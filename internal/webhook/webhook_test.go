@@ -87,6 +87,29 @@ func TestClassifyBranch_TaskWithDatedFeatureID(t *testing.T) {
 	}
 }
 
+func TestClassifyBranch_CustomTaskPattern(t *testing.T) {
+	info := webhook.ClassifyBranch("workspaces/workspace-data-backend/tasks/T7", "main", "workspaces/{feature_id}/tasks/{work_id}")
+	if info.Kind != webhook.BranchTask {
+		t.Fatalf("expected BranchTask, got %v", info.Kind)
+	}
+	if info.FeatureID != "workspace-data-backend" {
+		t.Errorf("expected FeatureID=workspace-data-backend, got %q", info.FeatureID)
+	}
+	if info.TaskID != "T7" {
+		t.Errorf("expected TaskID=T7, got %q", info.TaskID)
+	}
+}
+
+func TestClassifyBranch_CustomFeaturePattern(t *testing.T) {
+	info := webhook.ClassifyBranch("workspaces/workspace-data-backend", "main", "workspaces/{feature_id}/tasks/{work_id}")
+	if info.Kind != webhook.BranchFeature {
+		t.Fatalf("expected BranchFeature, got %v", info.Kind)
+	}
+	if info.FeatureID != "workspace-data-backend" {
+		t.Errorf("expected FeatureID=workspace-data-backend, got %q", info.FeatureID)
+	}
+}
+
 func TestClassifyBranch_Ignored(t *testing.T) {
 	cases := []string{"hotfix/something", "dependabot/npm/foo", "renovate/bar", ""}
 	for _, branch := range cases {
