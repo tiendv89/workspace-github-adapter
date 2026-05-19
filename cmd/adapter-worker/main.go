@@ -81,6 +81,11 @@ type handler struct {
 	redisOpt asynq.RedisConnOpt
 }
 
+type pendingTaskInspector interface {
+	ListPendingTasks(queue string, opts ...asynq.ListOption) ([]*asynq.TaskInfo, error)
+	DeleteTask(queue string, id string) error
+}
+
 func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error {
 	var payload queue.WorkspaceSyncPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
@@ -122,7 +127,12 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 	// Delete all pending task-sync jobs before full reconciliation starts.
 	// The full read supersedes all queued partial updates.
 	inspector := asynq.NewInspector(h.redisOpt)
-	if _, err := inspector.DeleteAllPendingTasks(queue.QueueTaskSync); err != nil {
+	defer func() {
+		if err := inspector.Close(); err != nil {
+			log.Printf("warn: close asynq inspector: %v", err)
+		}
+	}()
+	if _, err := clearPendingTaskSyncJobsForWorkspace(inspector, payload.WorkspaceID); err != nil {
 		log.Printf("warn: clear task-sync queue workspace_id=%s: %v", payload.WorkspaceID, err)
 	}
 
@@ -156,6 +166,52 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 
 	log.Printf("sync finished workspace_id=%s commit_sha=%s", payload.WorkspaceID, snap.CommitSHA)
 	return nil
+}
+
+func clearPendingTaskSyncJobsForWorkspace(inspector pendingTaskInspector, workspaceID string) (int, error) {
+	const pageSize = 100
+	deleted := 0
+	page := 1
+	for {
+		tasks, err := inspector.ListPendingTasks(queue.QueueTaskSync, asynq.Page(page), asynq.PageSize(pageSize))
+		if errors.Is(err, asynq.ErrQueueNotFound) {
+			return deleted, nil
+		}
+		if err != nil {
+			return deleted, fmt.Errorf("list pending task-sync jobs: %w", err)
+		}
+		if len(tasks) == 0 {
+			return deleted, nil
+		}
+
+		deletedFromPage := false
+		for _, info := range tasks {
+			if info.Type != queue.TypeTaskSync {
+				continue
+			}
+			var payload queue.TaskSyncPayload
+			if err := json.Unmarshal(info.Payload, &payload); err != nil {
+				continue
+			}
+			if payload.WorkspaceID != workspaceID {
+				continue
+			}
+			if err := inspector.DeleteTask(queue.QueueTaskSync, info.ID); err != nil {
+				return deleted, fmt.Errorf("delete pending task-sync job %s: %w", info.ID, err)
+			}
+			deleted++
+			deletedFromPage = true
+		}
+
+		if deletedFromPage {
+			page = 1
+			continue
+		}
+		if len(tasks) < pageSize {
+			return deleted, nil
+		}
+		page++
+	}
 }
 
 // handleTargetedSync fetches and upserts a single feature's artifacts.

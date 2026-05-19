@@ -67,7 +67,7 @@ var featurePathRe = regexp.MustCompile(`^docs/features/([^/]+)/`)
 // Returns an error if the signature is missing or invalid.
 func VerifySignature(secret string, header string, body []byte) error {
 	if secret == "" {
-		return nil
+		return fmt.Errorf("GITHUB_WEBHOOK_SECRET is required")
 	}
 	const prefix = "sha256="
 	if !strings.HasPrefix(header, prefix) {

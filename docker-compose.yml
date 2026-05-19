@@ -46,6 +46,7 @@ services:
       DATABASE_URL: postgres://workspace_adapter:workspace_adapter@postgres:5432/workspace_adapter?sslmode=disable
       REDIS_URL: redis://redis:6379/0
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET is required for adapter-service}
     ports:
       - "8080:8080"
     depends_on:

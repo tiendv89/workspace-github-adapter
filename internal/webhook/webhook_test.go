@@ -39,9 +39,8 @@ func TestVerifySignature_MissingHeader(t *testing.T) {
 }
 
 func TestVerifySignature_EmptySecret(t *testing.T) {
-	// Empty secret disables verification.
-	if err := webhook.VerifySignature("", "anything", []byte("body")); err != nil {
-		t.Fatalf("empty secret should skip verification, got: %v", err)
+	if err := webhook.VerifySignature("", "anything", []byte("body")); err == nil {
+		t.Fatal("expected empty secret to fail")
 	}
 }
 

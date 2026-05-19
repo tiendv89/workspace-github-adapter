@@ -148,6 +148,31 @@ func TestHandleWorkspaceSync_MissingWorkspaceIDDoesNotCreateWorkspace(t *testing
 	}
 }
 
+func TestClearPendingTaskSyncJobsForWorkspaceDeletesOnlyMatchingWorkspace(t *testing.T) {
+	inspector := &fakePendingTaskInspector{
+		tasks: []*asynq.TaskInfo{
+			taskInfo(t, "same-1", queue.TypeTaskSync, queue.TaskSyncPayload{WorkspaceID: "ws-a", FeatureID: "feature-a", TaskID: "T1"}),
+			taskInfo(t, "other-workspace", queue.TypeTaskSync, queue.TaskSyncPayload{WorkspaceID: "ws-b", FeatureID: "feature-b", TaskID: "T1"}),
+			taskInfo(t, "workspace-sync", queue.TypeWorkspaceSync, queue.WorkspaceSyncPayload{WorkspaceID: "ws-a"}),
+			taskInfo(t, "same-2", queue.TypeTaskSync, queue.TaskSyncPayload{WorkspaceID: "ws-a", FeatureID: "feature-a", TaskID: "T2"}),
+		},
+	}
+
+	deleted, err := clearPendingTaskSyncJobsForWorkspace(inspector, "ws-a")
+	if err != nil {
+		t.Fatalf("clear pending task sync jobs: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("expected 2 deleted tasks, got %d", deleted)
+	}
+	if got := inspector.deletedIDs; !equalStringSlices(got, []string{"same-1", "same-2"}) {
+		t.Fatalf("deleted IDs = %v, want [same-1 same-2]", got)
+	}
+	if len(inspector.tasks) != 2 {
+		t.Fatalf("expected non-matching tasks to remain, got %+v", inspector.tasks)
+	}
+}
+
 // TestHandleTaskSync_MissingFields verifies that empty required fields return an error.
 func TestHandleTaskSync_MissingFields(t *testing.T) {
 	h := &handler{db: &stubDB{}, github: &stubGitHub{}}
@@ -239,4 +264,47 @@ func TestHandleTaskSync_RetryableFailure(t *testing.T) {
 	if !se.Retryable {
 		t.Error("expected error to be retryable")
 	}
+}
+
+type fakePendingTaskInspector struct {
+	tasks      []*asynq.TaskInfo
+	deletedIDs []string
+}
+
+func (f *fakePendingTaskInspector) ListPendingTasks(string, ...asynq.ListOption) ([]*asynq.TaskInfo, error) {
+	out := make([]*asynq.TaskInfo, len(f.tasks))
+	copy(out, f.tasks)
+	return out, nil
+}
+
+func (f *fakePendingTaskInspector) DeleteTask(_ string, id string) error {
+	for i, task := range f.tasks {
+		if task.ID == id {
+			f.deletedIDs = append(f.deletedIDs, id)
+			f.tasks = append(f.tasks[:i], f.tasks[i+1:]...)
+			return nil
+		}
+	}
+	return errors.New("task not found")
+}
+
+func taskInfo(t *testing.T, id, taskType string, payload any) *asynq.TaskInfo {
+	t.Helper()
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	return &asynq.TaskInfo{ID: id, Type: taskType, Payload: b}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
