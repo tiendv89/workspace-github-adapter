@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
+	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 	"github.com/tiendv89/workspace-github-adapter/internal/webhook"
 )
@@ -270,6 +271,45 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	}
 }
 
+func TestImportWorkspaceHandler_GitHubNotFoundDoesNotPersistPlaceholder(t *testing.T) {
+	github := &recordingGitHubAdapter{
+		importErr: domain.NewGitHubNotFoundError("https://github.com/acme/missing"),
+	}
+	db := &recordingWorkspaceDB{}
+	store := &importNoRowsDB{}
+	enqueuer := &recordingEnqueuer{}
+	h := &serviceHandler{
+		db:     db,
+		q:      database.New(store),
+		github: github,
+		queue:  enqueuer,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
+		"repo_url":"https://github.com/acme/missing",
+		"default_branch":"main"
+	}`))
+	rec := httptest.NewRecorder()
+
+	h.importWorkspaceHandler(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing GitHub repo before DB write, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if github.importCalls != 1 {
+		t.Fatalf("expected one GitHub import preflight, got %d", github.importCalls)
+	}
+	if store.writeQueries != 0 {
+		t.Fatalf("expected no placeholder writes, got %d write queries", store.writeQueries)
+	}
+	if db.saveSnapshotCalls != 0 {
+		t.Fatalf("expected SaveSnapshot not to run, got %d calls", db.saveSnapshotCalls)
+	}
+	if len(enqueuer.workspaceSyncs) != 0 {
+		t.Fatalf("expected no queued workspace syncs, got %+v", enqueuer.workspaceSyncs)
+	}
+}
+
 // TestIsDedupeError verifies dedupe error detection.
 func TestIsDedupeError_Match(t *testing.T) {
 	err := &fakeError{"task already exists"}
@@ -294,6 +334,109 @@ func TestIsDedupeError_Nil(t *testing.T) {
 type fakeError struct{ msg string }
 
 func (e *fakeError) Error() string { return e.msg }
+
+type recordingGitHubAdapter struct {
+	importCalls int
+	importErr   error
+}
+
+func (g *recordingGitHubAdapter) ImportWorkspace(_ context.Context, _ domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+	g.importCalls++
+	if g.importErr != nil {
+		return nil, g.importErr
+	}
+	return &domain.WorkspaceSnapshot{}, nil
+}
+
+func (g *recordingGitHubAdapter) SyncWorkspace(context.Context, string, string, string) (*domain.WorkspaceSnapshot, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (g *recordingGitHubAdapter) FetchFeature(context.Context, string, string, string) (*domain.FeatureSnapshot, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (g *recordingGitHubAdapter) FetchTask(context.Context, string, string, string, string) (*domain.TaskSnapshot, error) {
+	return nil, errors.New("not implemented")
+}
+
+type recordingWorkspaceDB struct {
+	saveSnapshotCalls int
+}
+
+func (db *recordingWorkspaceDB) ListWorkspaces(context.Context) ([]domain.WorkspaceSummary, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) GetWorkspace(context.Context, string) (*domain.WorkspaceDetail, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) GetFeature(context.Context, string, string) (*domain.FeatureDetail, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) GetTask(context.Context, string, string, string) (*domain.TaskDetail, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) ListFeatureTasks(context.Context, string, string) ([]domain.TaskSummary, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) ListActivity(context.Context, string, domain.ActivityScope) ([]domain.ActivityEvent, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) SaveSnapshot(context.Context, string, *domain.WorkspaceSnapshot) error {
+	db.saveSnapshotCalls++
+	return nil
+}
+
+func (db *recordingWorkspaceDB) SaveFeatureSnapshot(context.Context, string, domain.FeatureSnapshot) error {
+	return errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) SaveTaskSnapshot(context.Context, string, domain.TaskSnapshot) error {
+	return errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) GetActiveSnapshot(context.Context, string) (*domain.WorkspaceSnapshot, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *recordingWorkspaceDB) GetLatestSyncRun(context.Context, string) (*domain.SyncRun, error) {
+	return nil, errors.New("not implemented")
+}
+
+type importNoRowsDB struct {
+	writeQueries int
+}
+
+func (db *importNoRowsDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
+func (db *importNoRowsDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *importNoRowsDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+	if strings.Contains(query, "INSERT INTO workspaces") ||
+		strings.Contains(query, "INSERT INTO workspace_github_sources") ||
+		strings.Contains(query, "INSERT INTO workspace_sync_runs") {
+		db.writeQueries++
+	}
+	return errRow{err: pgx.ErrNoRows}
+}
+
+type errRow struct {
+	err error
+}
+
+func (r errRow) Scan(...any) error {
+	return r.err
+}
 
 type recordingEnqueuer struct {
 	err            error

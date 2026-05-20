@@ -175,6 +175,17 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Validate the GitHub source before creating any DB placeholder so missing
+	// repos or invalid workspace repos do not leave orphaned workspace rows.
+	if _, err := h.github.ImportWorkspace(r.Context(), domain.ImportInput{
+		RepoURL:       req.RepoURL,
+		DefaultBranch: req.DefaultBranch,
+		Token:         h.token,
+	}); err != nil {
+		writeAnyError(w, err)
+		return
+	}
+
 	workspaceID := uuid.NewString()
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
