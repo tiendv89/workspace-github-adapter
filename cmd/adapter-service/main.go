@@ -175,19 +175,23 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Validate the GitHub source before creating any DB placeholder so missing
-	// repos or invalid workspace repos do not leave orphaned workspace rows.
-	if _, err := h.github.ImportWorkspace(r.Context(), domain.ImportInput{
+	// Validate the GitHub source and capture the snapshot so we can use the
+	// real management_repo_id and name rather than hardcoded placeholders.
+	snap, err := h.github.ImportWorkspace(r.Context(), domain.ImportInput{
 		RepoURL:       req.RepoURL,
 		DefaultBranch: req.DefaultBranch,
 		Token:         h.token,
-	}); err != nil {
+	})
+	if err != nil {
 		writeAnyError(w, err)
 		return
 	}
 
 	workspaceID := uuid.NewString()
 	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = snap.Name
+	}
 	if name == "" {
 		name = owner + "/" + repo
 	}
@@ -196,7 +200,7 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 		slug = workspaceID
 	}
 
-	workspaceID, err = h.createImportPlaceholder(r.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch)
+	workspaceID, err = h.createImportPlaceholder(r.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch, snap.ManagementRepoID)
 	if err != nil {
 		if existing, found, findErr := h.findExistingImport(r.Context(), owner, repo); findErr != nil {
 			writeAnyError(w, err)
@@ -578,13 +582,13 @@ func (h *serviceHandler) findExistingImport(ctx context.Context, owner, repo str
 	return ws, true, nil
 }
 
-func (h *serviceHandler) createImportPlaceholder(ctx context.Context, workspaceID, name, slug, repoURL, defaultBranch string) (string, error) {
+func (h *serviceHandler) createImportPlaceholder(ctx context.Context, workspaceID, name, slug, repoURL, defaultBranch, managementRepoID string) (string, error) {
 	uid, err := pgUUID(workspaceID)
 	if err != nil {
 		return "", err
 	}
 	if h.pool == nil {
-		return h.createImportPlaceholderWithQueries(ctx, h.q, uid, name, slug, repoURL, defaultBranch)
+		return h.createImportPlaceholderWithQueries(ctx, h.q, uid, name, slug, repoURL, defaultBranch, managementRepoID)
 	}
 
 	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -593,7 +597,7 @@ func (h *serviceHandler) createImportPlaceholder(ctx context.Context, workspaceI
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	actualWorkspaceID, err := h.createImportPlaceholderWithQueries(ctx, h.q.WithTx(tx), uid, name, slug, repoURL, defaultBranch)
+	actualWorkspaceID, err := h.createImportPlaceholderWithQueries(ctx, h.q.WithTx(tx), uid, name, slug, repoURL, defaultBranch, managementRepoID)
 	if err != nil {
 		return "", err
 	}
@@ -603,12 +607,12 @@ func (h *serviceHandler) createImportPlaceholder(ctx context.Context, workspaceI
 	return actualWorkspaceID, nil
 }
 
-func (h *serviceHandler) createImportPlaceholderWithQueries(ctx context.Context, q *database.Queries, uid pgtype.UUID, name, slug, repoURL, defaultBranch string) (string, error) {
+func (h *serviceHandler) createImportPlaceholderWithQueries(ctx context.Context, q *database.Queries, uid pgtype.UUID, name, slug, repoURL, defaultBranch, managementRepoID string) (string, error) {
 	ws, err := q.UpsertWorkspaceByID(ctx, database.UpsertWorkspaceByIDParams{
 		ID:               uid,
 		Slug:             slug,
 		Name:             name,
-		ManagementRepoID: "management-repo",
+		ManagementRepoID: managementRepoID,
 	})
 	if err != nil {
 		return "", fmt.Errorf("upsert import placeholder workspace: %w", err)

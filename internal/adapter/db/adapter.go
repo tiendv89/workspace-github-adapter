@@ -53,11 +53,17 @@ func (a *Adapter) ListWorkspaces(ctx context.Context) ([]domain.WorkspaceSummary
 		return nil, dbErr("list workspaces", err)
 	}
 
-	// Batch-load the latest sync run per workspace to avoid N+1 queries.
+	// Batch-load sync runs and GitHub sources to avoid N+1 queries.
 	allRuns, _ := a.q.ListLatestSyncRunsPerWorkspace(ctx) //nolint:errcheck
 	runMap := make(map[string]database.WorkspaceSyncRun, len(allRuns))
 	for _, run := range allRuns {
 		runMap[uuidStr(run.WorkspaceID)] = run
+	}
+
+	allSrcs, _ := a.q.ListAllGitHubSources(ctx) //nolint:errcheck
+	srcMap := make(map[string]string, len(allSrcs))
+	for _, s := range allSrcs {
+		srcMap[uuidStr(s.WorkspaceID)] = s.RepoURL
 	}
 
 	out := make([]domain.WorkspaceSummary, 0, len(rows))
@@ -74,7 +80,7 @@ func (a *Adapter) ListWorkspaces(ctx context.Context) ([]domain.WorkspaceSummary
 			ID:          uuidStr(r.ID),
 			Name:        r.Name,
 			Slug:        r.Slug,
-			RepoURL:     githubRepoURL(ctx, a.q, r.ID),
+			RepoURL:     srcMap[uuidStr(r.ID)],
 			SourceState: ss,
 			UpdatedAt:   r.UpdatedAt.Time,
 		})

@@ -33,3 +33,35 @@ func (q *Queries) GetGitHubSourceByRepo(ctx context.Context, arg GetGitHubSource
 	)
 	return i, err
 }
+
+const listAllGitHubSources = `
+SELECT id, workspace_id, repo_url, repo_owner, repo_name, default_branch, created_at, updated_at
+FROM workspace_github_sources`
+
+// ListAllGitHubSources returns all rows from workspace_github_sources in a single query.
+// Used by ListWorkspaces to avoid N+1 lookups.
+func (q *Queries) ListAllGitHubSources(ctx context.Context) ([]WorkspaceGitHubSource, error) {
+	rows, err := q.db.Query(ctx, listAllGitHubSources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkspaceGitHubSource
+	for rows.Next() {
+		var i WorkspaceGitHubSource
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RepoURL,
+			&i.RepoOwner,
+			&i.RepoName,
+			&i.DefaultBranch,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	return items, rows.Err()
+}
