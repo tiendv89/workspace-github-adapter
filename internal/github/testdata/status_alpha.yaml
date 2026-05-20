@@ -1,0 +1,14 @@
+feature: alpha-feature
+title: Alpha Feature
+status: in_implementation
+stage: in_implementation
+next_action: Run integration tests
+history:
+  - action: created
+    by: dev@example.com
+    at: 2026-01-01T10:00:00+0000
+    note: Feature created
+  - action: approved
+    by: lead@example.com
+    at: 2026-01-02T11:00:00+0000
+    note: Design approved

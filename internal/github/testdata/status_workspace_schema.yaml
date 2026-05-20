@@ -1,0 +1,16 @@
+feature_id: runtime-portable-architecture
+title: Portable runtime architecture — extract today's bundled orchestrator/executor into ports, adapters, and profiles
+feature_status: ready_for_implementation
+current_stage: implementation
+next_action: Tasks approved. Wave 1 task T1 is now ready.
+stages:
+  product_spec:
+    review_status: approved
+    reviewed_by: matthew@liquid-labs.xyz
+  handoff:
+    review_status: draft
+history:
+  - action: stage_approved
+    by: matthew@liquid-labs.xyz
+    at: 2026-05-04T02:21:32+0700
+    note: Tasks approved. Feature advanced from in_tdd to ready_for_implementation.
