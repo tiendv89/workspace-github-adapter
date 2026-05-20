@@ -142,7 +142,7 @@ const listLatestSyncRunsPerWorkspace = `-- name: ListLatestSyncRunsPerWorkspace 
 SELECT DISTINCT ON (workspace_id) id, workspace_id, trigger, branch, feature_id, task_id, mode, status,
        commit_sha, changed_paths, started_at, finished_at, error_code, error_message, metadata
 FROM workspace_sync_runs
-ORDER BY workspace_id, started_at DESC`
+ORDER BY workspace_id, finished_at DESC NULLS LAST`
 
 func (q *Queries) ListLatestSyncRunsPerWorkspace(ctx context.Context) ([]WorkspaceSyncRun, error) {
 	rows, err := q.db.Query(ctx, listLatestSyncRunsPerWorkspace)
@@ -185,7 +185,7 @@ SELECT id, workspace_id, trigger, branch, feature_id, task_id, mode, status,
        commit_sha, changed_paths, started_at, finished_at, error_code, error_message, metadata
 FROM workspace_sync_runs
 WHERE workspace_id = $1
-ORDER BY started_at DESC
+ORDER BY finished_at DESC NULLS LAST
 LIMIT 1`
 
 func (q *Queries) GetLatestSyncRun(ctx context.Context, workspaceID pgtype.UUID) (WorkspaceSyncRun, error) {

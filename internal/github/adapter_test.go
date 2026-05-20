@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -800,6 +801,60 @@ func TestImportWorkspaceSingleCommitSHAFetch(t *testing.T) {
 	if commitCalls != 1 {
 		t.Errorf("expected commits endpoint to be called exactly once, got %d calls", commitCalls)
 	}
+}
+
+func TestImportWorkspaceTruncatedTreeFails(t *testing.T) {
+	wsData := fixture(t, "workspace.yaml")
+
+	adapter := &adapterWithTransport{
+		Adapter:   &Adapter{token: "test-token"},
+		transport: &truncatedTreeTransport{wsData: wsData},
+	}
+	_, err := adapter.ImportWorkspace(context.Background(), domain.ImportInput{
+		RepoURL:       "https://github.com/owner/repo",
+		DefaultBranch: "main",
+	})
+	if err == nil {
+		t.Fatal("expected truncated tree to fail import")
+	}
+	se, ok := err.(domain.SourceError)
+	if !ok {
+		t.Fatalf("expected SourceError, got %T: %v", err, err)
+	}
+	if se.Source != domain.ErrorSourceGitHub || !se.Retryable || !strings.Contains(se.Message, "truncated") {
+		t.Fatalf("unexpected truncated-tree error: %+v", se)
+	}
+}
+
+type truncatedTreeTransport struct {
+	wsData []byte
+}
+
+func (t *truncatedTreeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	var status int
+	body := `{"message":"Not Found"}`
+
+	switch {
+	case strings.HasSuffix(req.URL.Path, "/commits/main"):
+		status = http.StatusOK
+		body = commitJSON("sha123")
+	case strings.Contains(req.URL.Path, "/git/trees/"):
+		status = http.StatusOK
+		body = `{"sha":"truncated-tree","truncated":true,"tree":[{"path":"workspace.yaml","type":"blob","sha":"abc123"}]}`
+	case strings.Contains(req.URL.Path, "/contents/workspace.yaml"):
+		status = http.StatusOK
+		body = contentJSON(t.wsData)
+	default:
+		status = http.StatusNotFound
+	}
+
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
+	}, nil
 }
 
 // errorTransport is an http.RoundTripper that always returns a network error.

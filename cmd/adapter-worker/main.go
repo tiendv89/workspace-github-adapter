@@ -149,6 +149,10 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)
 		return err
 	}
+	if err := firstSnapshotSourceError(snap); err != nil {
+		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)
+		return err
+	}
 	snap.WorkspaceID = payload.WorkspaceID
 	snap.RepoURL = payload.RepoURL
 	if strings.TrimSpace(payload.Name) != "" {
@@ -460,6 +464,16 @@ func (h *handler) upsertGitHubSource(ctx context.Context, workspaceID, repoURL, 
 		return fmt.Errorf("upsert github source: %w", err)
 	}
 	return nil
+}
+
+func firstSnapshotSourceError(snap *domain.WorkspaceSnapshot) error {
+	if snap == nil {
+		return domain.NewDatabaseError(domain.ErrAdapterInternal, "workspace import returned nil snapshot")
+	}
+	if len(snap.SourceErrors) == 0 {
+		return nil
+	}
+	return snap.SourceErrors[0]
 }
 
 func (h *handler) recordSuccessfulRun(ctx context.Context, payload queue.WorkspaceSyncPayload, trigger, mode, branch, commitSHA string) error {

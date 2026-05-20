@@ -164,6 +164,14 @@ func (c *client) getTree(ctx context.Context, owner, repo, sha string) (*gitTree
 			Retryable: false,
 		}
 	}
+	if tree.Truncated {
+		return nil, domain.SourceError{
+			Code:      domain.ErrGitHubServerError,
+			Message:   fmt.Sprintf("GitHub tree response truncated for %s/%s at %s", owner, repo, sha),
+			Source:    domain.ErrorSourceGitHub,
+			Retryable: true,
+		}
+	}
 	return &tree, nil
 }
 
