@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -202,8 +203,15 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 
 	workspaceID, err = h.createImportPlaceholder(r.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch, snap.ManagementRepoID)
 	if err != nil {
-		if existing, found, findErr := h.findExistingImport(r.Context(), owner, repo); findErr != nil {
+		// Only attempt the duplicate-detection fallback for unique constraint violations.
+		// For infrastructure errors (connection failure, timeout) we return immediately
+		// so they are not masked by a second failing query.
+		if !isUniqueViolation(err) {
 			writeAnyError(w, err)
+			return
+		}
+		if existing, found, findErr := h.findExistingImport(r.Context(), owner, repo); findErr != nil {
+			writeAnyError(w, findErr)
 			return
 		} else if found {
 			writeJSON(w, http.StatusOK, map[string]string{
@@ -562,6 +570,12 @@ func (h *serviceHandler) enqueueTaskSync(workspaceID, featureID, taskID string) 
 func isDedupeError(err error) bool {
 	return errors.Is(err, asynq.ErrDuplicateTask) || errors.Is(err, asynq.ErrTaskIDConflict) ||
 		(err != nil && strings.Contains(err.Error(), "task already exists"))
+}
+
+// isUniqueViolation returns true when err is a PostgreSQL unique constraint violation (SQLSTATE 23505).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func (h *serviceHandler) findExistingImport(ctx context.Context, owner, repo string) (database.Workspace, bool, error) {
