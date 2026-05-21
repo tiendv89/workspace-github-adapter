@@ -52,6 +52,7 @@ type importWorkspaceRequest struct {
 }
 
 type importWorkspaceResponse struct {
+	Status        string `json:"status,omitempty"`
 	WorkspaceID   string `json:"workspace_id"`
 	Name          string `json:"name,omitempty"`
 	Slug          string `json:"slug,omitempty"`
@@ -165,20 +166,13 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 		writeAnyError(w, err)
 		return
 	} else if found {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status":         "exists",
-			"workspace_id":   uuidString(existing.ID),
-			"name":           existing.Name,
-			"slug":           existing.Slug,
-			"repo_url":       req.RepoURL,
-			"default_branch": req.DefaultBranch,
-		})
+		writeExistingImport(w, existing, req.RepoURL, req.DefaultBranch)
 		return
 	}
 
-	// Validate the GitHub source and capture the snapshot so we can use the
-	// real management_repo_id and name rather than hardcoded placeholders.
-	snap, err := h.github.ImportWorkspace(r.Context(), domain.ImportInput{
+	// Validate the GitHub source and read workspace metadata so the HTTP request
+	// can return quickly while full reconciliation runs in the background worker.
+	snap, err := h.github.FetchWorkspaceMetadata(r.Context(), domain.ImportInput{
 		RepoURL:       req.RepoURL,
 		DefaultBranch: req.DefaultBranch,
 		Token:         h.token,
@@ -214,14 +208,11 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 			writeAnyError(w, findErr)
 			return
 		} else if found {
-			writeJSON(w, http.StatusOK, map[string]string{
-				"status":         "exists",
-				"workspace_id":   uuidString(existing.ID),
-				"name":           existing.Name,
-				"slug":           existing.Slug,
-				"repo_url":       req.RepoURL,
-				"default_branch": req.DefaultBranch,
-			})
+			writeExistingImport(w, existing, req.RepoURL, req.DefaultBranch)
+			return
+		}
+		if isUniqueConstraintViolation(err, "workspaces_slug_unique") {
+			writeSourceError(w, domain.NewDatabaseConflictError(fmt.Sprintf("workspace slug %q already exists for another GitHub repository", slug)))
 			return
 		}
 		writeAnyError(w, err)
@@ -578,6 +569,11 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+func isUniqueConstraintViolation(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
+}
+
 func (h *serviceHandler) findExistingImport(ctx context.Context, owner, repo string) (database.Workspace, bool, error) {
 	src, err := h.q.GetGitHubSourceByRepo(ctx, database.GetGitHubSourceByRepoParams{
 		RepoOwner: owner,
@@ -784,11 +780,25 @@ func writeSourceError(w http.ResponseWriter, se domain.SourceError) {
 			status = http.StatusBadGateway
 		}
 	case domain.ErrorSourceDatabase:
-		if se.Code == domain.ErrDatabaseNotFound {
+		switch se.Code {
+		case domain.ErrDatabaseNotFound:
 			status = http.StatusNotFound
+		case domain.ErrDatabaseConflict:
+			status = http.StatusConflict
 		}
 	}
 	writeJSON(w, status, domain.FromSourceError(se, nil))
+}
+
+func writeExistingImport(w http.ResponseWriter, existing database.Workspace, repoURL, defaultBranch string) {
+	writeJSON(w, http.StatusOK, importWorkspaceResponse{
+		Status:        "exists",
+		WorkspaceID:   uuidString(existing.ID),
+		Name:          existing.Name,
+		Slug:          existing.Slug,
+		RepoURL:       repoURL,
+		DefaultBranch: defaultBranch,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value interface{}) {

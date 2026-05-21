@@ -32,6 +32,9 @@ func (s *stubGitHub) ImportWorkspace(ctx context.Context, in domain.ImportInput)
 	}
 	return nil, errors.New("not implemented in stub")
 }
+func (s *stubGitHub) FetchWorkspaceMetadata(_ context.Context, _ domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+	return nil, errors.New("not implemented in stub")
+}
 func (s *stubGitHub) SyncWorkspace(_ context.Context, _, _, _ string) (*domain.WorkspaceSnapshot, error) {
 	return nil, errors.New("not implemented in stub")
 }

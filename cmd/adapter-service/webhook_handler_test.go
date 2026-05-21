@@ -296,14 +296,56 @@ func TestImportWorkspaceHandler_GitHubNotFoundDoesNotPersistPlaceholder(t *testi
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing GitHub repo before DB write, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if github.importCalls != 1 {
-		t.Fatalf("expected one GitHub import preflight, got %d", github.importCalls)
+	if github.metadataCalls != 1 {
+		t.Fatalf("expected one GitHub metadata preflight, got %d", github.metadataCalls)
+	}
+	if github.importCalls != 0 {
+		t.Fatalf("expected full GitHub import not to run in HTTP handler, got %d", github.importCalls)
 	}
 	if store.writeQueries != 0 {
 		t.Fatalf("expected no placeholder writes, got %d write queries", store.writeQueries)
 	}
 	if db.saveSnapshotCalls != 0 {
 		t.Fatalf("expected SaveSnapshot not to run, got %d calls", db.saveSnapshotCalls)
+	}
+	if len(enqueuer.workspaceSyncs) != 0 {
+		t.Fatalf("expected no queued workspace syncs, got %+v", enqueuer.workspaceSyncs)
+	}
+}
+
+func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *testing.T) {
+	github := &recordingGitHubAdapter{
+		metadata: &domain.WorkspaceSnapshot{Name: "Project Workspace", Slug: "project-workspace", ManagementRepoID: "repo"},
+	}
+	store := &importSlugConflictDB{}
+	enqueuer := &recordingEnqueuer{}
+	h := &serviceHandler{
+		q:      database.New(store),
+		github: github,
+		queue:  enqueuer,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
+		"repo_url":"https://github.com/Kadamato/test_workspace.git",
+		"default_branch":"main",
+		"name":"Project Workspace"
+	}`))
+	rec := httptest.NewRecorder()
+
+	h.importWorkspaceHandler(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate slug on different repo, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var apiErr domain.APIError
+	if err := json.NewDecoder(rec.Body).Decode(&apiErr); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if apiErr.Code != domain.ErrDatabaseConflict {
+		t.Fatalf("expected error code %s, got %s", domain.ErrDatabaseConflict, apiErr.Code)
+	}
+	if apiErr.Retryable {
+		t.Fatal("expected duplicate slug conflict to be non-retryable")
 	}
 	if len(enqueuer.workspaceSyncs) != 0 {
 		t.Fatalf("expected no queued workspace syncs, got %+v", enqueuer.workspaceSyncs)
@@ -336,8 +378,21 @@ type fakeError struct{ msg string }
 func (e *fakeError) Error() string { return e.msg }
 
 type recordingGitHubAdapter struct {
-	importCalls int
-	importErr   error
+	metadataCalls int
+	importCalls   int
+	importErr     error
+	metadata      *domain.WorkspaceSnapshot
+}
+
+func (g *recordingGitHubAdapter) FetchWorkspaceMetadata(_ context.Context, _ domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+	g.metadataCalls++
+	if g.importErr != nil {
+		return nil, g.importErr
+	}
+	if g.metadata != nil {
+		return g.metadata, nil
+	}
+	return &domain.WorkspaceSnapshot{Name: "Test Workspace", Slug: "test-workspace", ManagementRepoID: "repo"}, nil
 }
 
 func (g *recordingGitHubAdapter) ImportWorkspace(_ context.Context, _ domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
@@ -436,6 +491,27 @@ type errRow struct {
 
 func (r errRow) Scan(...any) error {
 	return r.err
+}
+
+type importSlugConflictDB struct{}
+
+func (db *importSlugConflictDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
+func (db *importSlugConflictDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (db *importSlugConflictDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "FROM workspace_github_sources"):
+		return errRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "INSERT INTO workspaces"):
+		return errRow{err: &pgconn.PgError{Code: "23505", ConstraintName: "workspaces_slug_unique"}}
+	default:
+		return errRow{err: errors.New("unexpected query")}
+	}
 }
 
 type recordingEnqueuer struct {

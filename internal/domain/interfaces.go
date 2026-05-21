@@ -16,6 +16,10 @@ type GitHubWorkspaceAdapter interface {
 	// Returns a complete WorkspaceSnapshot or an error if the repo is inaccessible.
 	ImportWorkspace(ctx context.Context, input ImportInput) (*WorkspaceSnapshot, error)
 
+	// FetchWorkspaceMetadata validates the repository and reads only workspace.yaml.
+	// It is used by HTTP import preflight so full reconciliation can run asynchronously.
+	FetchWorkspaceMetadata(ctx context.Context, input ImportInput) (*WorkspaceSnapshot, error)
+
 	// SyncWorkspace re-fetches the repository at the given ref (branch or SHA)
 	// and returns an updated WorkspaceSnapshot.
 	SyncWorkspace(ctx context.Context, workspaceID, repoURL, ref string) (*WorkspaceSnapshot, error)
