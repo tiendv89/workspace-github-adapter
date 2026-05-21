@@ -34,17 +34,19 @@ func New(token string) *Adapter {
 // Ensure Adapter satisfies the interface at compile time.
 var _ domain.GitHubWorkspaceAdapter = (*Adapter)(nil)
 
-// ImportWorkspace performs a full reconciliation import of the given repository.
-func (a *Adapter) ImportWorkspace(ctx context.Context, input domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+const workspaceYAMLPath = "workspace.yaml"
+
+type repoTarget struct {
+	client *client
+	owner  string
+	repo   string
+	ref    string
+}
+
+func (a *Adapter) repoTarget(input domain.ImportInput) (*repoTarget, error) {
 	if err := validateInput(input); err != nil {
 		return nil, *err
 	}
-
-	token := input.Token
-	if token == "" {
-		token = a.token
-	}
-	c := newClient(token)
 
 	owner, repo, err := parseRepoURL(input.RepoURL)
 	if err != nil {
@@ -56,7 +58,68 @@ func (a *Adapter) ImportWorkspace(ctx context.Context, input domain.ImportInput)
 		ref = "main"
 	}
 
-	return a.fetchSnapshot(ctx, c, owner, repo, ref, "")
+	token := input.Token
+	if token == "" {
+		token = a.token
+	}
+
+	return &repoTarget{
+		client: newClient(token),
+		owner:  owner,
+		repo:   repo,
+		ref:    ref,
+	}, nil
+}
+
+// ImportWorkspace performs a full reconciliation import of the given repository.
+func (a *Adapter) ImportWorkspace(ctx context.Context, input domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+	target, err := a.repoTarget(input)
+	if err != nil {
+		return nil, err
+	}
+	return a.fetchSnapshot(ctx, target.client, target.owner, target.repo, target.ref, "")
+}
+
+// FetchWorkspaceMetadata validates the repository and reads only workspace.yaml.
+func (a *Adapter) FetchWorkspaceMetadata(ctx context.Context, input domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
+	target, err := a.repoTarget(input)
+	if err != nil {
+		return nil, err
+	}
+
+	wsData, err := target.client.getFileContent(ctx, target.owner, target.repo, workspaceYAMLPath, target.ref)
+	if err != nil {
+		return nil, mapFetchError(err, target.owner, target.repo)
+	}
+	if wsData == nil {
+		return nil, domain.SourceError{
+			Code:      domain.ErrGitHubNotFound,
+			Message:   fmt.Sprintf("required file not found: %s", workspaceYAMLPath),
+			Source:    domain.ErrorSourceGitHub,
+			Retryable: false,
+			Path:      workspaceYAMLPath,
+		}
+	}
+	wsCfg, parseErr := parseWorkspaceYAML(wsData, workspaceYAMLPath)
+	if parseErr != nil {
+		return nil, *parseErr
+	}
+
+	name := wsCfg.Name
+	if name == "" {
+		name = target.owner + "/" + target.repo
+	}
+	slug := slugify(name)
+
+	return &domain.WorkspaceSnapshot{
+		WorkspaceID:      slug,
+		Name:             name,
+		Slug:             slug,
+		RepoURL:          "https://github.com/" + target.owner + "/" + target.repo,
+		ManagementRepoID: wsCfg.ManagementRepo,
+		BranchPattern:    wsCfg.Git.BranchPattern,
+		FetchedAt:        time.Now().UTC(),
+	}, nil
 }
 
 // FetchFeature fetches and parses all artifacts for a single feature from the given ref.

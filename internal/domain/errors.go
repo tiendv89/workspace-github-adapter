@@ -34,6 +34,7 @@ const (
 	ErrDatabaseQuery       ErrorCode = "DATABASE_QUERY"
 	ErrDatabaseTransaction ErrorCode = "DATABASE_TRANSACTION"
 	ErrDatabaseNotFound    ErrorCode = "DATABASE_NOT_FOUND"
+	ErrDatabaseConflict    ErrorCode = "DATABASE_CONFLICT"
 
 	// Adapter errors.
 	ErrAdapterInternal ErrorCode = "ADAPTER_INTERNAL"
@@ -124,6 +125,16 @@ func NewDatabaseError(code ErrorCode, detail string) SourceError {
 		Message:   fmt.Sprintf("Database error: %s", detail),
 		Source:    ErrorSourceDatabase,
 		Retryable: true,
+	}
+}
+
+// NewDatabaseConflictError returns a SourceError for data conflicts.
+func NewDatabaseConflictError(detail string) SourceError {
+	return SourceError{
+		Code:      ErrDatabaseConflict,
+		Message:   fmt.Sprintf("Database conflict: %s", detail),
+		Source:    ErrorSourceDatabase,
+		Retryable: false,
 	}
 }
 
