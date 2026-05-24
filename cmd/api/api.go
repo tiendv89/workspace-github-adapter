@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,8 +36,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	cfg := configs.G
 
 	if cfg.GitHub.WebhookSecrets == "" {
-		log.Fatal().Msg("GITHUB_WEBHOOK_SECRETS is required for api webhooks")
+		log.Fatal().Msg("github.webhook_secrets is required")
 	}
+	secrets := strings.Split(cfg.GitHub.WebhookSecrets, ",")
 
 	redisOpt := queue.RedisOpt(cfg.Redis.Addr())
 	client := asynq.NewClient(redisOpt)
@@ -60,7 +63,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		GitHub:         ghadapter.New(cfg.GitHub.Token),
 		Token:          cfg.GitHub.Token,
 		Queue:          client,
-		WebhookSecrets: cfg.GitHub.WebhookSecrets,
+		WebhookSecrets: secrets,
 	}
 
 	if cfg.API.HTTP.Mode == "release" {
