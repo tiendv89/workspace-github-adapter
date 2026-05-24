@@ -40,7 +40,7 @@ func main() {
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("pgxpool.New: %v", err)
+		log.Fatalf("pgxpool.New: %v", err) //nolint:gocritic
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {

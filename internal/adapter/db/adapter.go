@@ -156,7 +156,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 	if err != nil {
 		return nil, err
 	}
-	_, featureUUID, err := a.resolveFeature(ctx, uid, featureID)
+	featureUUID, err := a.resolveFeature(ctx, uid, featureID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "feature not found: "+featureID)
@@ -245,7 +245,7 @@ func (a *Adapter) GetTask(ctx context.Context, workspaceID, featureID, taskID st
 	if err != nil {
 		return nil, err
 	}
-	_, featureUUID, err := a.resolveFeature(ctx, uid, featureID)
+	featureUUID, err := a.resolveFeature(ctx, uid, featureID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "feature not found: "+featureID)
@@ -301,7 +301,7 @@ func (a *Adapter) ListFeatureTasks(ctx context.Context, workspaceID, featureID s
 	if err != nil {
 		return nil, err
 	}
-	_, featureUUID, err := a.resolveFeature(ctx, uid, featureID)
+	featureUUID, err := a.resolveFeature(ctx, uid, featureID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "feature not found: "+featureID)
@@ -336,7 +336,7 @@ func (a *Adapter) ListActivity(ctx context.Context, workspaceID string, scope do
 
 	switch {
 	case scope.FeatureID != "" && scope.TaskID != "":
-		_, featureUUID, err := a.resolveFeature(ctx, uid, scope.FeatureID)
+		featureUUID, err := a.resolveFeature(ctx, uid, scope.FeatureID)
 		if err != nil {
 			return nil, err
 		}
@@ -350,7 +350,7 @@ func (a *Adapter) ListActivity(ctx context.Context, workspaceID string, scope do
 			TaskID:      taskUUID,
 		})
 	case scope.FeatureID != "":
-		_, featureUUID, err := a.resolveFeature(ctx, uid, scope.FeatureID)
+		featureUUID, err := a.resolveFeature(ctx, uid, scope.FeatureID)
 		if err != nil {
 			return nil, err
 		}
@@ -424,7 +424,7 @@ func (a *Adapter) SaveTaskSnapshot(ctx context.Context, workspaceID string, snap
 		return err
 	}
 
-	_, featureUUID, err := a.resolveFeature(ctx, uid, snap.FeatureID)
+	featureUUID, err := a.resolveFeature(ctx, uid, snap.FeatureID)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return dbErr("get feature for task sync", err)
@@ -1008,17 +1008,17 @@ func parseUUID(s string) (pgtype.UUID, error) {
 	return parseUUIDField(s, "workspace_id")
 }
 
-func (a *Adapter) resolveFeature(ctx context.Context, workspaceID pgtype.UUID, featureIdentifier string) (database.WorkspaceFeature, pgtype.UUID, error) {
+func (a *Adapter) resolveFeature(ctx context.Context, workspaceID pgtype.UUID, featureIdentifier string) (pgtype.UUID, error) {
 	if featureUUID, err := parseUUIDField(featureIdentifier, "feature_id"); err == nil {
 		feature, err := a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{
 			WorkspaceID: workspaceID,
 			FeatureID:   featureUUID,
 		})
 		if err == nil {
-			return feature, feature.ID, nil
+			return feature.ID, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return database.WorkspaceFeature{}, pgtype.UUID{}, dbErr("get feature", err)
+			return pgtype.UUID{}, dbErr("get feature", err)
 		}
 	}
 
@@ -1027,9 +1027,9 @@ func (a *Adapter) resolveFeature(ctx context.Context, workspaceID pgtype.UUID, f
 		FeatureName: strings.TrimSpace(featureIdentifier),
 	})
 	if err != nil {
-		return database.WorkspaceFeature{}, pgtype.UUID{}, err
+		return pgtype.UUID{}, err
 	}
-	return feature, feature.ID, nil
+	return feature.ID, nil
 }
 
 func (a *Adapter) resolveTask(ctx context.Context, workspaceID, featureID pgtype.UUID, taskIdentifier string) (database.WorkspaceTask, pgtype.UUID, error) {
