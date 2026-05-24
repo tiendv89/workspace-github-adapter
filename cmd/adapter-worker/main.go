@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -15,9 +15,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
+	"github.com/tiendv89/workspace-github-adapter/configs"
 	dbadapter "github.com/tiendv89/workspace-github-adapter/internal/adapter/db"
-	"github.com/tiendv89/workspace-github-adapter/internal/config"
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 	ghadapter "github.com/tiendv89/workspace-github-adapter/internal/github"
@@ -25,33 +27,46 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("config: %v", err)
+	cfgPath := "configs/config.yaml"
+	if v := os.Getenv("CONFIG_PATH"); v != "" {
+		cfgPath = v
 	}
 
-	redisOpt, err := queue.RedisOpt(cfg.RedisURL)
+	cfg, err := configs.Load(cfgPath)
 	if err != nil {
-		log.Fatalf("redis: %v", err)
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	level, err := zerolog.ParseLevel(cfg.Log.Level)
+	if err != nil {
+		level = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(level)
+
+	redisOpt, err := queue.RedisOpt(cfg.Redis.URL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("redis")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := pgxpool.New(ctx, cfg.Database.URL)
 	if err != nil {
-		log.Fatalf("pgxpool.New: %v", err) //nolint:gocritic
+		log.Fatal().Err(err).Msg("pgxpool.New")
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("ping db: %v", err)
+		log.Fatal().Err(err).Msg("ping db")
 	}
 
 	h := &handler{
 		db:       dbadapter.New(pool),
 		q:        database.New(pool),
-		github:   ghadapter.New(cfg.GitHubToken),
-		token:    cfg.GitHubToken,
+		github:   ghadapter.New(cfg.GitHub.Token),
+		token:    cfg.GitHub.Token,
 		redisOpt: redisOpt,
 	}
 
@@ -67,9 +82,9 @@ func main() {
 	mux.HandleFunc(queue.TypeWorkspaceSync, h.handleWorkspaceSync)
 	mux.HandleFunc(queue.TypeTaskSync, h.handleTaskSync)
 
-	log.Println("adapter-worker listening for Redis queue tasks")
+	log.Info().Msg("adapter-worker listening for Redis queue tasks")
 	if err := srv.Run(mux); err != nil {
-		log.Fatalf("worker stopped: %v", err)
+		log.Fatal().Err(err).Msg("worker stopped")
 	}
 }
 
@@ -124,14 +139,14 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 	}
 
 	// Full reconciliation: clear pending task-sync jobs first, then sync everything.
-	log.Printf("sync started workspace_id=%s repo_url=%s ref=%s", payload.WorkspaceID, payload.RepoURL, ref)
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("repo_url", payload.RepoURL).Str("ref", ref).Msg("sync started")
 
 	// Delete all pending task-sync jobs before full reconciliation starts.
 	// The full read supersedes all queued partial updates.
 	inspector := h.openPendingTaskInspector()
 	defer func() {
 		if err := inspector.Close(); err != nil {
-			log.Printf("warn: close asynq inspector: %v", err)
+			log.Warn().Err(err).Msg("close asynq inspector")
 		}
 	}()
 	if _, err := clearPendingTaskSyncJobsForWorkspace(inspector, payload.WorkspaceID); err != nil {
@@ -172,7 +187,7 @@ func (h *handler) handleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
-	log.Printf("sync finished workspace_id=%s commit_sha=%s", payload.WorkspaceID, snap.CommitSHA)
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("commit_sha", snap.CommitSHA).Msg("sync finished")
 	return nil
 }
 
@@ -231,8 +246,7 @@ func clearPendingTaskSyncJobsForWorkspace(inspector pendingTaskInspector, worksp
 
 // handleTargetedSync fetches and upserts a single feature's artifacts.
 func (h *handler) handleTargetedSync(ctx context.Context, payload queue.WorkspaceSyncPayload, trigger, ref string) error {
-	log.Printf("targeted sync started workspace_id=%s feature_id=%s ref=%s",
-		payload.WorkspaceID, payload.FeatureID, ref)
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Str("ref", ref).Msg("targeted sync started")
 
 	snap, err := h.github.FetchFeature(ctx, payload.RepoURL, ref, payload.FeatureID)
 	if err != nil {
@@ -253,10 +267,10 @@ func (h *handler) handleTargetedSync(ctx context.Context, payload queue.Workspac
 		ID: runUID,
 	})
 	if err != nil {
-		log.Printf("warn: update targeted sync run success workspace_id=%s: %v", payload.WorkspaceID, err)
+		log.Warn().Err(err).Str("workspace_id", payload.WorkspaceID).Msg("update targeted sync run success")
 	}
 
-	log.Printf("targeted sync finished workspace_id=%s feature_id=%s", payload.WorkspaceID, payload.FeatureID)
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Msg("targeted sync finished")
 	return nil
 }
 
@@ -272,8 +286,7 @@ func (h *handler) handleTaskSync(ctx context.Context, t *asynq.Task) error {
 		return fmt.Errorf("task sync payload missing required fields: %+v", payload)
 	}
 
-	log.Printf("task sync started workspace_id=%s feature_id=%s task_id=%s",
-		payload.WorkspaceID, payload.FeatureID, payload.TaskID)
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Str("task_id", payload.TaskID).Msg("task sync started")
 
 	// Look up workspace to get repo_url and branch_pattern.
 	uid, err := pgUUID(payload.WorkspaceID)
@@ -310,8 +323,7 @@ func (h *handler) handleTaskSync(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	log.Printf("task sync finished workspace_id=%s feature_id=%s task_id=%s",
-		payload.WorkspaceID, payload.FeatureID, payload.TaskID)
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Str("task_id", payload.TaskID).Msg("task sync finished")
 	return nil
 }
 
@@ -369,8 +381,7 @@ func (h *handler) recordTaskSyncFailed(ctx context.Context, payload queue.TaskSy
 	}
 	runID, err := h.ensureTaskSyncRun(ctx, payload, branch, false)
 	if err != nil {
-		log.Printf("ensure failed task sync run failed workspace_id=%s feature_id=%s task_id=%s error=%v original_error=%v",
-			payload.WorkspaceID, payload.FeatureID, payload.TaskID, err, syncErr)
+		log.Error().Err(err).Err(syncErr).Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Str("task_id", payload.TaskID).Msg("ensure failed task sync run failed")
 		return
 	}
 	if _, err := h.q.UpdateSyncRunFailed(ctx, database.UpdateSyncRunFailedParams{
@@ -378,8 +389,7 @@ func (h *handler) recordTaskSyncFailed(ctx context.Context, payload queue.TaskSy
 		ErrorCode:    &code,
 		ErrorMessage: &message,
 	}); err != nil {
-		log.Printf("update failed task sync run failed workspace_id=%s feature_id=%s task_id=%s error=%v original_error=%v",
-			payload.WorkspaceID, payload.FeatureID, payload.TaskID, err, syncErr)
+		log.Error().Err(err).Err(syncErr).Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Str("task_id", payload.TaskID).Msg("update failed task sync run failed")
 	}
 }
 
@@ -393,8 +403,7 @@ func (h *handler) ensureTaskSyncRun(ctx context.Context, payload queue.TaskSyncP
 		if requireRefs {
 			return pgtype.UUID{}, err
 		}
-		log.Printf("warn: could not resolve task sync run refs workspace_id=%s feature_id=%s task_id=%s: %v",
-			payload.WorkspaceID, payload.FeatureID, payload.TaskID, err)
+		log.Warn().Err(err).Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Str("task_id", payload.TaskID).Msg("could not resolve task sync run refs")
 		featureUUID = pgtype.UUID{}
 		taskUUID = pgtype.UUID{}
 	}
@@ -502,7 +511,7 @@ func (h *handler) recordFailedRun(ctx context.Context, payload queue.WorkspaceSy
 	}
 	runID, err := h.ensureSyncRun(ctx, payload, trigger, mode, branch, nil, false)
 	if err != nil {
-		log.Printf("ensure failed sync run failed workspace_id=%s error=%v original_error=%v", payload.WorkspaceID, err, syncErr)
+		log.Error().Err(err).Err(syncErr).Str("workspace_id", payload.WorkspaceID).Msg("ensure failed sync run failed")
 		return
 	}
 	if _, err := h.q.UpdateSyncRunFailed(ctx, database.UpdateSyncRunFailedParams{
@@ -510,7 +519,7 @@ func (h *handler) recordFailedRun(ctx context.Context, payload queue.WorkspaceSy
 		ErrorCode:    &code,
 		ErrorMessage: &message,
 	}); err != nil {
-		log.Printf("update failed sync run failed workspace_id=%s error=%v original_error=%v", payload.WorkspaceID, err, syncErr)
+		log.Error().Err(err).Err(syncErr).Str("workspace_id", payload.WorkspaceID).Msg("update failed sync run failed")
 	}
 }
 
@@ -527,8 +536,7 @@ func (h *handler) ensureSyncRun(ctx context.Context, payload queue.WorkspaceSync
 		if requireRefs {
 			return pgtype.UUID{}, err
 		}
-		log.Printf("warn: could not resolve sync run feature ref workspace_id=%s feature_id=%s: %v",
-			payload.WorkspaceID, payload.FeatureID, err)
+		log.Warn().Err(err).Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Msg("could not resolve sync run feature ref")
 		featureUUID = pgtype.UUID{}
 	}
 	branchPtr := branch

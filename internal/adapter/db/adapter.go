@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
@@ -57,7 +57,7 @@ func (a *Adapter) ListWorkspaces(ctx context.Context) ([]domain.WorkspaceSummary
 	// Batch-load sync runs and GitHub sources to avoid N+1 queries.
 	allRuns, err := a.q.ListLatestSyncRunsPerWorkspace(ctx)
 	if err != nil {
-		log.Printf("warn: list latest sync runs per workspace: %v", err)
+		log.Warn().Err(err).Msg("list latest sync runs per workspace")
 	}
 	runMap := make(map[string]database.WorkspaceSyncRun, len(allRuns))
 	for _, run := range allRuns {
@@ -66,7 +66,7 @@ func (a *Adapter) ListWorkspaces(ctx context.Context) ([]domain.WorkspaceSummary
 
 	allSrcs, err := a.q.ListAllGitHubSources(ctx)
 	if err != nil {
-		log.Printf("warn: list all github sources: %v", err)
+		log.Warn().Err(err).Msg("list all github sources")
 	}
 	srcMap := make(map[string]string, len(allSrcs))
 	for _, s := range allSrcs {
@@ -122,7 +122,7 @@ func (a *Adapter) GetWorkspace(ctx context.Context, workspaceID string) (*domain
 
 	latestRun, runErr := a.q.GetLatestSyncRun(ctx, uid)
 	if runErr != nil && !errors.Is(runErr, pgx.ErrNoRows) {
-		log.Printf("warn: get latest sync run workspace=%s: %v", workspaceID, runErr)
+		log.Warn().Err(runErr).Str("workspace_id", workspaceID).Msg("get latest sync run")
 	}
 	ss := syncRunToSourceState(&latestRun, nil)
 
@@ -201,7 +201,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 
 	latestRun, runErr := a.q.GetLatestSyncRun(ctx, uid)
 	if runErr != nil && !errors.Is(runErr, pgx.ErrNoRows) {
-		log.Printf("warn: get latest sync run workspace=%s: %v", workspaceID, runErr)
+		log.Warn().Err(runErr).Str("workspace_id", workspaceID).Msg("get latest sync run")
 	}
 	ss := syncRunToSourceState(&latestRun, nil)
 
@@ -278,7 +278,7 @@ func (a *Adapter) GetTask(ctx context.Context, workspaceID, featureID, taskID st
 		TaskID:      taskUUID,
 	})
 	if actErr != nil {
-		log.Printf("warn: list task activity events workspace=%s task=%s: %v", workspaceID, taskID, actErr)
+		log.Warn().Err(actErr).Str("workspace_id", workspaceID).Str("task_id", taskID).Msg("list task activity events")
 	}
 
 	activity := make([]domain.ActivityEvent, 0, len(actEvents))
@@ -486,7 +486,7 @@ func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*d
 
 	src, srcErr := a.q.GetGitHubSource(ctx, uid)
 	if srcErr != nil && !errors.Is(srcErr, pgx.ErrNoRows) {
-		log.Printf("warn: get github source workspace=%s: %v", workspaceID, srcErr)
+		log.Warn().Err(srcErr).Str("workspace_id", workspaceID).Msg("get github source")
 	}
 
 	// Pre-fetch all docs and tasks in two queries to avoid N+1 per feature.
