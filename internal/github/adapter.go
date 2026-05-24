@@ -118,6 +118,7 @@ func (a *Adapter) FetchWorkspaceMetadata(ctx context.Context, input domain.Impor
 		RepoURL:          "https://github.com/" + target.owner + "/" + target.repo,
 		ManagementRepoID: wsCfg.ManagementRepo,
 		BranchPattern:    wsCfg.Git.BranchPattern,
+		SlackChannelID:   wsCfg.Notifications.Slack.ChannelID,
 		FetchedAt:        time.Now().UTC(),
 	}, nil
 }
@@ -298,6 +299,7 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 		RepoURL:          "https://github.com/" + owner + "/" + repo,
 		ManagementRepoID: wsCfg.ManagementRepo,
 		BranchPattern:    wsCfg.Git.BranchPattern,
+		SlackChannelID:   wsCfg.Notifications.Slack.ChannelID,
 		CommitSHA:        commitSHA,
 		FetchedAt:        fetchedAt,
 		Features:         features,

@@ -611,6 +611,7 @@ func (r webhookWorkspaceRow) Scan(dest ...any) error {
 		r.workspace.Name,
 		r.workspace.ManagementRepoID,
 		r.workspace.BranchPattern,
+		r.workspace.SlackChannelID,
 		r.workspace.CreatedAt,
 		r.workspace.UpdatedAt,
 	}

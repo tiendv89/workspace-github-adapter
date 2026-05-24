@@ -599,6 +599,7 @@ func (r workspaceRow) Scan(dest ...any) error {
 		"Workspace",
 		"management-repo",
 		(*string)(nil),
+		(*string)(nil), // slack_channel_id
 		pgtype.Timestamptz{},
 		pgtype.Timestamptz{},
 	}
