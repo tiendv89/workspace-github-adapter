@@ -83,6 +83,16 @@ func VerifySignature(secret string, header string, body []byte) error {
 
 const maxWebhookBodyBytes = 10 << 20 // 10 MiB
 
+// ReadBody reads the request body up to maxWebhookBodyBytes without verifying the signature.
+// Returns raw bytes. The caller must not call r.Body.Read again.
+func ReadBody(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read webhook body: %w", err)
+	}
+	return body, nil
+}
+
 // ReadAndVerify reads the request body and verifies the GitHub HMAC signature.
 // Returns the raw body bytes on success. The caller must not call r.Body.Read again.
 func ReadAndVerify(r *http.Request, secret string) ([]byte, error) {
