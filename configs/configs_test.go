@@ -26,7 +26,7 @@ func writeConfig(t *testing.T, content string) string {
 
 func TestLoad_HappyPath(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "ghp_test")
-	t.Setenv("GITHUB_WEBHOOK_SECRET", "secret")
+	t.Setenv("GITHUB_WEBHOOK_SECRETS", "secret")
 
 	path := writeConfig(t, `
 log:
@@ -48,7 +48,7 @@ redis:
     - localhost:6379
 github:
   token: "ghp_yaml"
-  webhook_secret: "yaml_secret"
+  webhook_secrets: "yaml_secret"
 sync:
   stale_threshold_minutes: 60
 `)
@@ -71,11 +71,50 @@ sync:
 	if cfg.GitHub.Token != "ghp_test" {
 		t.Errorf("github.token: got %q, want %q", cfg.GitHub.Token, "ghp_test")
 	}
-	if cfg.GitHub.WebhookSecret != "secret" {
-		t.Errorf("github.webhook_secret: got %q, want %q", cfg.GitHub.WebhookSecret, "secret")
+	if cfg.GitHub.WebhookSecrets != "secret" {
+		t.Errorf("github.webhook_secrets: got %q, want %q", cfg.GitHub.WebhookSecrets, "secret")
 	}
 	if cfg.StaleThreshold() != 60*time.Minute {
 		t.Errorf("stale threshold: got %v, want 60m", cfg.StaleThreshold())
+	}
+}
+
+func TestLoad_WebhookSecrets_Multiple(t *testing.T) {
+	path := writeConfig(t, `
+db:
+  host: localhost
+  port: 5432
+  db_name: testdb
+  user: postgres
+  password: postgres
+github:
+  webhook_secrets: "s1,s2,s3"
+`)
+	cfg, err := configs.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.GitHub.WebhookSecrets != "s1,s2,s3" {
+		t.Errorf("github.webhook_secrets: got %q, want %q", cfg.GitHub.WebhookSecrets, "s1,s2,s3")
+	}
+}
+
+func TestLoad_WebhookSecrets_Empty(t *testing.T) {
+	// Empty webhook_secrets is loadable; startup guard lives in api.go, not Load.
+	path := writeConfig(t, `
+db:
+  host: localhost
+  port: 5432
+  db_name: testdb
+  user: postgres
+  password: postgres
+`)
+	cfg, err := configs.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.GitHub.WebhookSecrets != "" {
+		t.Errorf("github.webhook_secrets: got %q, want empty string", cfg.GitHub.WebhookSecrets)
 	}
 }
 

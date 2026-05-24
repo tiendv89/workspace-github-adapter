@@ -33,7 +33,7 @@ type workspaceWebhookInfo struct {
 //   - task branch → enqueue task:sync with dedup
 //   - other → 200 OK, ignored
 func (h *ServiceHandler) WebhookHandler(c *gin.Context) {
-	body, err := webhook.ReadAndVerify(c.Request, h.WebhookSecret)
+	body, err := webhook.ReadAndVerify(c.Request, h.WebhookSecrets)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "signature verification failed: " + err.Error()})
 		return

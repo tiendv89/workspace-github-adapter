@@ -46,7 +46,7 @@ func buildSig(body []byte) string {
 
 // TestWebhookHandler_InvalidSignature verifies that requests with wrong HMAC are rejected.
 func TestWebhookHandler_InvalidSignature(t *testing.T) {
-	h := &ServiceHandler{WebhookSecret: "mysecret"}
+	h := &ServiceHandler{WebhookSecrets: "mysecret"}
 
 	body := []byte(`{"ref":"refs/heads/main","repository":{"clone_url":"https://github.com/o/r"},"commits":[]}`)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
@@ -74,7 +74,7 @@ func TestWebhookHandler_MethodNotAllowed(t *testing.T) {
 // TestWebhookHandler_NonPushEvent verifies that non-push events are ignored with 200.
 func TestWebhookHandler_NonPushEvent(t *testing.T) {
 	secret := "mysecret"
-	h := &ServiceHandler{WebhookSecret: secret}
+	h := &ServiceHandler{WebhookSecrets: secret}
 	body := []byte(`{}`)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "pull_request")
@@ -157,9 +157,9 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 	secret := "mysecret"
 	enqueuer := &recordingEnqueuer{}
 	h := &ServiceHandler{
-		Q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
-		Queue:         enqueuer,
-		WebhookSecret: secret,
+		Q:              database.New(&webhookSourceDB{src: testGitHubSource(t)}),
+		Queue:          enqueuer,
+		WebhookSecrets: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/main",
@@ -190,9 +190,9 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T) {
 	secret := "mysecret"
 	h := &ServiceHandler{
-		Q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
-		Queue:         &recordingEnqueuer{err: errors.New("redis unavailable")},
-		WebhookSecret: secret,
+		Q:              database.New(&webhookSourceDB{src: testGitHubSource(t)}),
+		Queue:          &recordingEnqueuer{err: errors.New("redis unavailable")},
+		WebhookSecrets: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/feature/workspace-data-backend-T7",
@@ -220,8 +220,8 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 			src:       testGitHubSource(t),
 			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
 		}),
-		Queue:         enqueuer,
-		WebhookSecret: secret,
+		Queue:          enqueuer,
+		WebhookSecrets: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/workspaces/workspace-data-backend/tasks/T7",
@@ -256,8 +256,8 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 			src:       testGitHubSource(t),
 			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
 		}),
-		Queue:         enqueuer,
-		WebhookSecret: secret,
+		Queue:          enqueuer,
+		WebhookSecrets: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/workspaces/workspace-data-backend",

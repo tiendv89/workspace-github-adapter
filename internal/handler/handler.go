@@ -15,11 +15,11 @@ type TaskEnqueuer interface {
 
 // ServiceHandler holds shared dependencies for all HTTP handlers.
 type ServiceHandler struct {
-	DB            domain.DbWorkspaceAdapter
-	Q             *database.Queries
-	Pool          *pgxpool.Pool
-	GitHub        domain.GitHubWorkspaceAdapter
-	Token         string
-	Queue         TaskEnqueuer
-	WebhookSecret string
+	DB             domain.DbWorkspaceAdapter
+	Q              *database.Queries
+	Pool           *pgxpool.Pool
+	GitHub         domain.GitHubWorkspaceAdapter
+	Token          string
+	Queue          TaskEnqueuer
+	WebhookSecrets string // comma-separated; T3 splits into []string for multi-secret routing
 }

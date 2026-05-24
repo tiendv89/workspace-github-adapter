@@ -70,8 +70,8 @@ func (c *RedisConfig) Addr() string {
 }
 
 type GitHubConfig struct {
-	Token         string `mapstructure:"token"`
-	WebhookSecret string `mapstructure:"webhook_secret"`
+	Token          string `mapstructure:"token"`
+	WebhookSecrets string `mapstructure:"webhook_secrets"` // comma-separated list of secrets
 }
 
 type SyncConfig struct {
