@@ -14,6 +14,7 @@ type Workspace struct {
 	Name             string             `db:"name" json:"name"`
 	ManagementRepoID string             `db:"management_repo_id" json:"management_repo_id"`
 	BranchPattern    *string            `db:"branch_pattern" json:"branch_pattern"`
+	SlackChannelID   *string            `db:"slack_channel_id" json:"slack_channel_id"`
 	CreatedAt        pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }

@@ -9,7 +9,7 @@ import (
 )
 
 const listWorkspaces = `-- name: ListWorkspaces :many
-SELECT id, slug, name, management_repo_id, branch_pattern, created_at, updated_at
+SELECT id, slug, name, management_repo_id, branch_pattern, slack_channel_id, created_at, updated_at
 FROM workspaces
 ORDER BY updated_at DESC`
 
@@ -28,6 +28,7 @@ func (q *Queries) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 			&i.Name,
 			&i.ManagementRepoID,
 			&i.BranchPattern,
+			&i.SlackChannelID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -42,7 +43,7 @@ func (q *Queries) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, slug, name, management_repo_id, branch_pattern, created_at, updated_at
+SELECT id, slug, name, management_repo_id, branch_pattern, slack_channel_id, created_at, updated_at
 FROM workspaces
 WHERE id = $1`
 
@@ -55,6 +56,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, id pgtype.UUID) (Workspace, 
 		&i.Name,
 		&i.ManagementRepoID,
 		&i.BranchPattern,
+		&i.SlackChannelID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -62,7 +64,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, id pgtype.UUID) (Workspace, 
 }
 
 const getWorkspaceBySlug = `-- name: GetWorkspaceBySlug :one
-SELECT id, slug, name, management_repo_id, branch_pattern, created_at, updated_at
+SELECT id, slug, name, management_repo_id, branch_pattern, slack_channel_id, created_at, updated_at
 FROM workspaces
 WHERE slug = $1`
 
@@ -75,6 +77,7 @@ func (q *Queries) GetWorkspaceBySlug(ctx context.Context, slug string) (Workspac
 		&i.Name,
 		&i.ManagementRepoID,
 		&i.BranchPattern,
+		&i.SlackChannelID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -82,14 +85,15 @@ func (q *Queries) GetWorkspaceBySlug(ctx context.Context, slug string) (Workspac
 }
 
 const upsertWorkspace = `-- name: UpsertWorkspace :one
-INSERT INTO workspaces (id, slug, name, management_repo_id, branch_pattern, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
+INSERT INTO workspaces (id, slug, name, management_repo_id, branch_pattern, slack_channel_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, now(), now())
 ON CONFLICT (slug) DO UPDATE SET
     name               = EXCLUDED.name,
     management_repo_id = EXCLUDED.management_repo_id,
     branch_pattern     = EXCLUDED.branch_pattern,
+    slack_channel_id   = EXCLUDED.slack_channel_id,
     updated_at         = now()
-RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at`
+RETURNING id, slug, name, management_repo_id, branch_pattern, slack_channel_id, created_at, updated_at`
 
 type UpsertWorkspaceParams struct {
 	ID               pgtype.UUID
@@ -97,6 +101,7 @@ type UpsertWorkspaceParams struct {
 	Name             string
 	ManagementRepoID string
 	BranchPattern    *string
+	SlackChannelID   *string
 }
 
 func (q *Queries) UpsertWorkspace(ctx context.Context, arg UpsertWorkspaceParams) (Workspace, error) {
@@ -106,6 +111,7 @@ func (q *Queries) UpsertWorkspace(ctx context.Context, arg UpsertWorkspaceParams
 		arg.Name,
 		arg.ManagementRepoID,
 		arg.BranchPattern,
+		arg.SlackChannelID,
 	)
 	var i Workspace
 	err := row.Scan(
@@ -114,6 +120,7 @@ func (q *Queries) UpsertWorkspace(ctx context.Context, arg UpsertWorkspaceParams
 		&i.Name,
 		&i.ManagementRepoID,
 		&i.BranchPattern,
+		&i.SlackChannelID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -121,15 +128,16 @@ func (q *Queries) UpsertWorkspace(ctx context.Context, arg UpsertWorkspaceParams
 }
 
 const upsertWorkspaceByID = `-- name: UpsertWorkspaceByID :one
-INSERT INTO workspaces (id, slug, name, management_repo_id, branch_pattern, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
+INSERT INTO workspaces (id, slug, name, management_repo_id, branch_pattern, slack_channel_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, now(), now())
 ON CONFLICT (id) DO UPDATE SET
     slug               = EXCLUDED.slug,
     name               = EXCLUDED.name,
     management_repo_id = EXCLUDED.management_repo_id,
     branch_pattern     = EXCLUDED.branch_pattern,
+    slack_channel_id   = EXCLUDED.slack_channel_id,
     updated_at         = now()
-RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at`
+RETURNING id, slug, name, management_repo_id, branch_pattern, slack_channel_id, created_at, updated_at`
 
 type UpsertWorkspaceByIDParams struct {
 	ID               pgtype.UUID
@@ -137,6 +145,7 @@ type UpsertWorkspaceByIDParams struct {
 	Name             string
 	ManagementRepoID string
 	BranchPattern    *string
+	SlackChannelID   *string
 }
 
 func (q *Queries) UpsertWorkspaceByID(ctx context.Context, arg UpsertWorkspaceByIDParams) (Workspace, error) {
@@ -146,6 +155,7 @@ func (q *Queries) UpsertWorkspaceByID(ctx context.Context, arg UpsertWorkspaceBy
 		arg.Name,
 		arg.ManagementRepoID,
 		arg.BranchPattern,
+		arg.SlackChannelID,
 	)
 	var i Workspace
 	err := row.Scan(
@@ -154,6 +164,7 @@ func (q *Queries) UpsertWorkspaceByID(ctx context.Context, arg UpsertWorkspaceBy
 		&i.Name,
 		&i.ManagementRepoID,
 		&i.BranchPattern,
+		&i.SlackChannelID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -166,9 +177,10 @@ SET slug               = $2,
     name               = $3,
     management_repo_id = $4,
     branch_pattern     = $5,
+    slack_channel_id   = $6,
     updated_at         = now()
 WHERE id = $1
-RETURNING id, slug, name, management_repo_id, branch_pattern, created_at, updated_at`
+RETURNING id, slug, name, management_repo_id, branch_pattern, slack_channel_id, created_at, updated_at`
 
 type UpdateWorkspaceByIDParams struct {
 	ID               pgtype.UUID
@@ -176,6 +188,7 @@ type UpdateWorkspaceByIDParams struct {
 	Name             string
 	ManagementRepoID string
 	BranchPattern    *string
+	SlackChannelID   *string
 }
 
 func (q *Queries) UpdateWorkspaceByID(ctx context.Context, arg UpdateWorkspaceByIDParams) (Workspace, error) {
@@ -185,6 +198,7 @@ func (q *Queries) UpdateWorkspaceByID(ctx context.Context, arg UpdateWorkspaceBy
 		arg.Name,
 		arg.ManagementRepoID,
 		arg.BranchPattern,
+		arg.SlackChannelID,
 	)
 	var i Workspace
 	err := row.Scan(
@@ -193,6 +207,7 @@ func (q *Queries) UpdateWorkspaceByID(ctx context.Context, arg UpdateWorkspaceBy
 		&i.Name,
 		&i.ManagementRepoID,
 		&i.BranchPattern,
+		&i.SlackChannelID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

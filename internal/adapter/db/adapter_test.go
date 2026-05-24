@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -303,7 +304,7 @@ func TestRowToFeatureSummary(t *testing.T) {
 func TestUpsertSnapshotPersistsBranchPattern(t *testing.T) {
 	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
 	branchPattern := "workspaces/{feature_id}/tasks/{work_id}"
-	fake := &branchPatternDB{t: t, workspaceID: workspaceID}
+	fake := &workspaceUpdateDB{t: t, workspaceID: workspaceID}
 
 	err := db.ExportedUpsertSnapshot(context.Background(), database.New(fake), workspaceID, &domain.WorkspaceSnapshot{
 		Name:          "Workspace",
@@ -324,48 +325,94 @@ func TestUpsertSnapshotPersistsBranchPattern(t *testing.T) {
 	}
 }
 
-type branchPatternDB struct {
-	t             *testing.T
-	workspaceID   pgtype.UUID
-	updateCalls   int
-	branchPattern *string
+func TestUpsertSnapshotPersistsSlackChannelID(t *testing.T) {
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+	channelID := "C0123456789"
+	fake := &workspaceUpdateDB{t: t, workspaceID: workspaceID}
+
+	err := db.ExportedUpsertSnapshot(context.Background(), database.New(fake), workspaceID, &domain.WorkspaceSnapshot{
+		Name:           "Workspace",
+		Slug:           "workspace",
+		SlackChannelID: channelID,
+	})
+	if err != nil {
+		t.Fatalf("upsert snapshot: %v", err)
+	}
+	if fake.slackChannelID == nil {
+		t.Fatal("expected slack_channel_id to be persisted, got nil")
+	}
+	if *fake.slackChannelID != channelID {
+		t.Fatalf("slack_channel_id = %q, want %q", *fake.slackChannelID, channelID)
+	}
 }
 
-func (f *branchPatternDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func TestUpsertSnapshotEmptySlackChannelID(t *testing.T) {
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+	fake := &workspaceUpdateDB{t: t, workspaceID: workspaceID}
+
+	err := db.ExportedUpsertSnapshot(context.Background(), database.New(fake), workspaceID, &domain.WorkspaceSnapshot{
+		Name: "Workspace",
+		Slug: "workspace",
+	})
+	if err != nil {
+		t.Fatalf("upsert snapshot: %v", err)
+	}
+	if fake.slackChannelID != nil {
+		t.Fatalf("expected slack_channel_id to be nil for empty string, got %q", *fake.slackChannelID)
+	}
+}
+
+type workspaceUpdateDB struct {
+	t              *testing.T
+	workspaceID    pgtype.UUID
+	updateCalls    int
+	branchPattern  *string
+	slackChannelID *string
+}
+
+func (f *workspaceUpdateDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
 	return pgconn.CommandTag{}, nil
 }
 
-func (f *branchPatternDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+func (f *workspaceUpdateDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (f *branchPatternDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+func (f *workspaceUpdateDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	if !strings.Contains(query, "UPDATE workspaces") {
 		f.t.Fatalf("unexpected query: %s", query)
 	}
 	f.updateCalls++
-	f.branchPattern, _ = args[4].(*string)
+	if len(args) > 4 {
+		f.branchPattern, _ = args[4].(*string)
+	}
+	if len(args) > 5 {
+		f.slackChannelID, _ = args[5].(*string)
+	}
 	return workspaceUpdateRow{
-		workspaceID:   f.workspaceID,
-		branchPattern: f.branchPattern,
+		workspaceID:    f.workspaceID,
+		branchPattern:  f.branchPattern,
+		slackChannelID: f.slackChannelID,
 	}
 }
 
 type workspaceUpdateRow struct {
-	workspaceID   pgtype.UUID
-	branchPattern *string
+	workspaceID    pgtype.UUID
+	branchPattern  *string
+	slackChannelID *string
 }
 
 func (r workspaceUpdateRow) Scan(dest ...any) error {
-	if len(dest) != 7 {
-		return errors.New("unexpected workspace scan destination count")
+	if len(dest) != 8 {
+		return fmt.Errorf("unexpected workspace scan destination count: got %d, want 8", len(dest))
 	}
 	*(dest[0].(*pgtype.UUID)) = r.workspaceID
 	*(dest[1].(*string)) = "workspace"
 	*(dest[2].(*string)) = "Workspace"
 	*(dest[3].(*string)) = "management-repo"
 	*(dest[4].(**string)) = r.branchPattern
-	*(dest[5].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
+	*(dest[5].(**string)) = r.slackChannelID
 	*(dest[6].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
+	*(dest[7].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
 	return nil
 }

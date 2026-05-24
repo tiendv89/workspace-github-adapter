@@ -210,6 +210,39 @@ func TestParseWorkspaceYAML(t *testing.T) {
 	}
 }
 
+func TestParseWorkspaceYAMLSlackChannelID(t *testing.T) {
+	data := []byte(`
+name: Slack Workspace
+management_repo: mgmt-repo
+git:
+  branch_pattern: "feature/{feature_id}-{work_id}"
+repos:
+  - id: backend
+    base_branch: main
+notifications:
+  slack:
+    channel_id: C0123456789
+`)
+	ws, se := parseWorkspaceYAML(data, "workspace.yaml")
+	if se != nil {
+		t.Fatalf("unexpected error: %v", se)
+	}
+	if ws.Notifications.Slack.ChannelID != "C0123456789" {
+		t.Errorf("expected slack channel_id 'C0123456789', got %q", ws.Notifications.Slack.ChannelID)
+	}
+}
+
+func TestParseWorkspaceYAMLNoNotifications(t *testing.T) {
+	data := fixture(t, "workspace.yaml")
+	ws, se := parseWorkspaceYAML(data, "workspace.yaml")
+	if se != nil {
+		t.Fatalf("unexpected error: %v", se)
+	}
+	if ws.Notifications.Slack.ChannelID != "" {
+		t.Errorf("expected empty slack channel_id when notifications absent, got %q", ws.Notifications.Slack.ChannelID)
+	}
+}
+
 func TestParseWorkspaceYAMLInvalid(t *testing.T) {
 	data := fixture(t, "invalid.yaml")
 	_, se := parseWorkspaceYAML(data, "workspace.yaml")
@@ -489,6 +522,90 @@ func TestImportWorkspaceSuccess(t *testing.T) {
 	}
 	if snap.BranchPattern != "feature/{feature_id}-{work_id}" {
 		t.Errorf("expected branch pattern from workspace.yaml, got %q", snap.BranchPattern)
+	}
+}
+
+func TestImportWorkspaceSlackChannelID(t *testing.T) {
+	wsWithSlack := []byte(`
+name: Test Workspace
+management_repo: workspace-backend
+git:
+  branch_pattern: "feature/{feature_id}-{work_id}"
+repos:
+  - id: workspace-backend
+    base_branch: main
+notifications:
+  slack:
+    channel_id: C0999888777
+`)
+	statusData := fixture(t, "status_alpha.yaml")
+	taskData := fixture(t, "task_T1.yaml")
+
+	treePaths := []string{
+		"workspace.yaml",
+		"docs/features/alpha-feature/status.yaml",
+		"docs/features/alpha-feature/tasks/T1.yaml",
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/commits/main"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(commitJSON("sha123")))
+		case strings.Contains(path, "/git/trees/"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(treeJSON(treePaths)))
+		case strings.Contains(path, "/contents/workspace.yaml"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON(wsWithSlack)))
+		case strings.Contains(path, "/contents/docs/features/alpha-feature/status.yaml"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON(statusData)))
+		case strings.Contains(path, "/contents/docs/features/alpha-feature/tasks/T1.yaml"):
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(contentJSON(taskData)))
+		default:
+			w.WriteHeader(404)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}
+	}))
+	defer srv.Close()
+
+	adapter := &adapterWithTransport{
+		Adapter:   &Adapter{token: "test-token"},
+		transport: proxyTransport(srv.URL),
+	}
+	snap, err := adapter.ImportWorkspace(context.Background(), domain.ImportInput{
+		RepoURL:       "https://github.com/owner/repo",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if snap.SlackChannelID != "C0999888777" {
+		t.Errorf("expected SlackChannelID 'C0999888777', got %q", snap.SlackChannelID)
+	}
+}
+
+func TestImportWorkspaceNoSlackChannelID(t *testing.T) {
+	srv := fullWorkspaceServer(t)
+	defer srv.Close()
+
+	adapter := &adapterWithTransport{
+		Adapter:   &Adapter{token: "test-token"},
+		transport: proxyTransport(srv.URL),
+	}
+	snap, err := adapter.ImportWorkspace(context.Background(), domain.ImportInput{
+		RepoURL:       "https://github.com/owner/repo",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if snap.SlackChannelID != "" {
+		t.Errorf("expected empty SlackChannelID when notifications absent, got %q", snap.SlackChannelID)
 	}
 }
 

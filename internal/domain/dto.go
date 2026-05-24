@@ -142,6 +142,7 @@ type WorkspaceSnapshot struct {
 	RepoURL          string
 	ManagementRepoID string
 	BranchPattern    string
+	SlackChannelID   string
 	CommitSHA        string
 	FetchedAt        time.Time
 	Features         []FeatureSnapshot
