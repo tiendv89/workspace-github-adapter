@@ -2,6 +2,7 @@ package webhook_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,7 +15,7 @@ import (
 
 func TestReadBody_HappyPath(t *testing.T) {
 	body := []byte(`{"ref":"refs/heads/main"}`)
-	r, _ := http.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/", bytes.NewReader(body))
 
 	got, err := webhook.ReadBody(r)
 	if err != nil {
@@ -29,7 +30,7 @@ func TestReadBody_Oversized(t *testing.T) {
 	// Build a body larger than maxWebhookBodyBytes (10 MiB).
 	const maxBytes = 10 << 20
 	oversized := strings.Repeat("a", maxBytes+1024)
-	r, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(oversized))
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader(oversized))
 
 	got, err := webhook.ReadBody(r)
 	if err != nil {
@@ -42,7 +43,7 @@ func TestReadBody_Oversized(t *testing.T) {
 }
 
 func TestReadBody_Empty(t *testing.T) {
-	r, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(""))
+	r, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/", strings.NewReader(""))
 
 	got, err := webhook.ReadBody(r)
 	if err != nil {
