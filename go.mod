@@ -1,6 +1,6 @@
 module github.com/tiendv89/workspace-github-adapter
 
-go 1.25.0
+go 1.25.8
 
 require (
 	github.com/fatih/color v1.19.0
