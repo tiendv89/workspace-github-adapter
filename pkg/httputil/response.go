@@ -1,6 +1,7 @@
 package httputil
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -20,7 +21,8 @@ func WriteSourceError(c *gin.Context, se domain.SourceError) {
 
 // WriteAnyError writes a SourceError if err is one, otherwise wraps it in a generic database error.
 func WriteAnyError(c *gin.Context, err error) {
-	if srcErr, ok := err.(domain.SourceError); ok {
+	var srcErr domain.SourceError
+	if errors.As(err, &srcErr) {
 		WriteSourceError(c, srcErr)
 		return
 	}
