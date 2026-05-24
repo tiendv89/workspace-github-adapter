@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	adapterdb "github.com/tiendv89/workspace-github-adapter/internal/adapter/db"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
-	adapterdb "github.com/tiendv89/workspace-github-adapter/pkg/adapter/db"
 )
 
 // Integration tests require a live PostgreSQL database.
