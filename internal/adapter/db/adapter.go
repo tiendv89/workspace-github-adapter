@@ -536,6 +536,7 @@ func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*d
 		RepoURL:          repoURL,
 		ManagementRepoID: ws.ManagementRepoID,
 		BranchPattern:    derefStr(ws.BranchPattern),
+		SlackChannelID:   derefStr(ws.SlackChannelID),
 		Features:         featureSnapshots,
 		Repos:            repoEntries,
 	}, nil
@@ -570,6 +571,7 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, s
 		Name:             snap.Name,
 		ManagementRepoID: mgmtRepoID,
 		BranchPattern:    ptrStr(snap.BranchPattern),
+		SlackChannelID:   ptrStr(snap.SlackChannelID),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

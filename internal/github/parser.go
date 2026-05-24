@@ -41,10 +41,11 @@ func parseTimestamp(s string) time.Time {
 
 // workspaceYAML mirrors the relevant fields from workspace.yaml.
 type workspaceYAML struct {
-	Name           string     `yaml:"name"`
-	Repos          []repoYAML `yaml:"repos"`
-	Git            gitYAML    `yaml:"git"`
-	ManagementRepo string     `yaml:"management_repo"`
+	Name           string                     `yaml:"name"`
+	Repos          []repoYAML                 `yaml:"repos"`
+	Git            gitYAML                    `yaml:"git"`
+	ManagementRepo string                     `yaml:"management_repo"`
+	Notifications  workspaceNotificationsYAML `yaml:"notifications"`
 }
 
 type repoYAML struct {
@@ -54,6 +55,14 @@ type repoYAML struct {
 
 type gitYAML struct {
 	BranchPattern string `yaml:"branch_pattern"`
+}
+
+type workspaceNotificationsYAML struct {
+	Slack workspaceSlackNotificationsYAML `yaml:"slack"`
+}
+
+type workspaceSlackNotificationsYAML struct {
+	ChannelID string `yaml:"channel_id"`
 }
 
 // featureStatusYAML mirrors the relevant fields from docs/features/*/status.yaml.
