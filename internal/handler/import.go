@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
@@ -38,22 +39,14 @@ type importWorkspaceResponse struct {
 }
 
 // ImportWorkspaceHandler handles POST /internal/workspaces/import.
-func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	defer func() { _ = r.Body.Close() }()
-
+func (h *ServiceHandler) ImportWorkspaceHandler(c *gin.Context) {
 	var req importWorkspaceRequest
-	if err := decodeJSON(r, &req); err != nil {
-		httputil.WriteSourceError(w, domain.NewValidationError(domain.ErrValidationMissingInput, "invalid JSON body: "+err.Error()))
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httputil.WriteSourceError(c, domain.NewValidationError(domain.ErrValidationMissingInput, "invalid JSON body: "+err.Error()))
 		return
 	}
 	if strings.TrimSpace(req.RepoURL) == "" {
-		httputil.WriteSourceError(w, domain.NewValidationError(domain.ErrValidationMissingInput, "repo_url is required"))
+		httputil.WriteSourceError(c, domain.NewValidationError(domain.ErrValidationMissingInput, "repo_url is required"))
 		return
 	}
 	if req.DefaultBranch == "" {
@@ -62,28 +55,26 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 
 	owner, repo, err := urlutil.ParseGitHubRepo(req.RepoURL)
 	if err != nil {
-		httputil.WriteAnyError(w, err)
+		httputil.WriteAnyError(c, err)
 		return
 	}
-	existing, found, err := h.findExistingImport(r.Context(), owner, repo)
+	existing, found, err := h.findExistingImport(c.Request.Context(), owner, repo)
 	if err != nil {
-		httputil.WriteAnyError(w, err)
+		httputil.WriteAnyError(c, err)
 		return
 	}
 	if found {
-		writeExistingImport(w, existing, req.RepoURL, req.DefaultBranch)
+		writeExistingImport(c, existing, req.RepoURL, req.DefaultBranch)
 		return
 	}
 
-	// Validate the GitHub source and read workspace metadata so the HTTP request
-	// can return quickly while full reconciliation runs in the background worker.
-	snap, err := h.GitHub.FetchWorkspaceMetadata(r.Context(), domain.ImportInput{
+	snap, err := h.GitHub.FetchWorkspaceMetadata(c.Request.Context(), domain.ImportInput{
 		RepoURL:       req.RepoURL,
 		DefaultBranch: req.DefaultBranch,
 		Token:         h.Token,
 	})
 	if err != nil {
-		httputil.WriteAnyError(w, err)
+		httputil.WriteAnyError(c, err)
 		return
 	}
 
@@ -100,33 +91,30 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 		slug = workspaceID
 	}
 
-	workspaceID, err = h.createImportPlaceholder(r.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch, snap.ManagementRepoID)
+	workspaceID, err = h.createImportPlaceholder(c.Request.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch, snap.ManagementRepoID)
 	if err != nil {
-		// Only attempt the duplicate-detection fallback for unique constraint violations.
-		// For infrastructure errors (connection failure, timeout) we return immediately
-		// so they are not masked by a second failing query.
 		if !pgutil2.IsUniqueViolation(err) {
-			httputil.WriteAnyError(w, err)
+			httputil.WriteAnyError(c, err)
 			return
 		}
-		if existing, found, findErr := h.findExistingImport(r.Context(), owner, repo); findErr != nil {
-			httputil.WriteAnyError(w, findErr)
+		if existing, found, findErr := h.findExistingImport(c.Request.Context(), owner, repo); findErr != nil {
+			httputil.WriteAnyError(c, findErr)
 			return
 		} else if found {
-			writeExistingImport(w, existing, req.RepoURL, req.DefaultBranch)
+			writeExistingImport(c, existing, req.RepoURL, req.DefaultBranch)
 			return
 		}
 		if pgutil2.IsUniqueConstraintViolation(err, "workspaces_slug_unique") {
-			httputil.WriteSourceError(w, domain.NewDatabaseConflictError(fmt.Sprintf("workspace slug %q already exists for another GitHub repository", slug)))
+			httputil.WriteSourceError(c, domain.NewDatabaseConflictError(fmt.Sprintf("workspace slug %q already exists for another GitHub repository", slug)))
 			return
 		}
-		httputil.WriteAnyError(w, err)
+		httputil.WriteAnyError(c, err)
 		return
 	}
 
-	run, err := h.insertRunningRun(r.Context(), workspaceID, "api_import", "full", req.DefaultBranch)
+	run, err := h.insertRunningRun(c.Request.Context(), workspaceID, "api_import", "full", req.DefaultBranch)
 	if err != nil {
-		httputil.WriteAnyError(w, err)
+		httputil.WriteAnyError(c, err)
 		return
 	}
 	syncRunID := pgutil2.UUIDString(run.ID)
@@ -142,16 +130,16 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 	}
 	task, err := queue.NewWorkspaceSyncTask(payload)
 	if err != nil {
-		httputil.WriteAnyError(w, err)
+		httputil.WriteAnyError(c, err)
 		return
 	}
 	info, err := h.Queue.Enqueue(task, asynq.TaskID(WorkspaceSyncTaskID(payload)))
 	if err != nil {
-		if failErr := h.markRunFailed(r.Context(), run.ID, "ENQUEUE_FAILED", err.Error()); failErr != nil {
+		if failErr := h.markRunFailed(c.Request.Context(), run.ID, "ENQUEUE_FAILED", err.Error()); failErr != nil {
 			log.Error().Err(failErr).Str("workspace_id", workspaceID).Str("run_id", syncRunID).Msg("mark import enqueue failed run failed")
 		}
 		if pgutil2.IsDedupeError(err) {
-			httputil.WriteOK(w, http.StatusAccepted, map[string]string{
+			httputil.WriteOK(c, http.StatusAccepted, map[string]string{
 				"status":       "already_queued",
 				"workspace_id": workspaceID,
 				"sync_run_id":  syncRunID,
@@ -159,11 +147,11 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 			})
 			return
 		}
-		httputil.WriteAnyError(w, fmt.Errorf("enqueue task: %w", err))
+		httputil.WriteAnyError(c, fmt.Errorf("enqueue task: %w", err))
 		return
 	}
 
-	httputil.WriteOK(w, http.StatusAccepted, map[string]string{
+	httputil.WriteOK(c, http.StatusAccepted, map[string]string{
 		"workspace_id":   workspaceID,
 		"name":           name,
 		"slug":           slug,
@@ -290,8 +278,8 @@ func (h *ServiceHandler) markRunFailed(ctx context.Context, runID pgtype.UUID, c
 	return nil
 }
 
-func writeExistingImport(w http.ResponseWriter, existing database.Workspace, repoURL, defaultBranch string) {
-	httputil.WriteOK(w, http.StatusOK, importWorkspaceResponse{
+func writeExistingImport(c *gin.Context, existing database.Workspace, repoURL, defaultBranch string) {
+	httputil.WriteOK(c, http.StatusOK, importWorkspaceResponse{
 		Status:        "exists",
 		WorkspaceID:   pgutil2.UUIDString(existing.ID),
 		Name:          existing.Name,

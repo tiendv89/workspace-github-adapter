@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"github.com/rs/zerolog/log"
 
@@ -31,57 +32,47 @@ type workspaceWebhookInfo struct {
 //   - feature branch → enqueue targeted workspace:sync for that feature
 //   - task branch → enqueue task:sync with dedup
 //   - other → 200 OK, ignored
-func (h *ServiceHandler) WebhookHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := webhook.ReadAndVerify(r, h.WebhookSecret)
+func (h *ServiceHandler) WebhookHandler(c *gin.Context) {
+	body, err := webhook.ReadAndVerify(c.Request, h.WebhookSecret)
 	if err != nil {
-		http.Error(w, "signature verification failed: "+err.Error(), http.StatusUnauthorized)
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "signature verification failed: " + err.Error()})
 		return
 	}
 
-	// Only handle push events; ignore other event types gracefully.
-	eventType := r.Header.Get("X-GitHub-Event")
+	eventType := c.GetHeader("X-GitHub-Event")
 	if eventType != "push" {
-		httputil.WriteOK(w, http.StatusOK, map[string]string{"status": "ignored", "event": eventType})
+		httputil.WriteOK(c, http.StatusOK, map[string]string{"status": "ignored", "event": eventType})
 		return
 	}
 
 	ev, err := webhook.ParsePushEvent(body)
 	if err != nil {
-		http.Error(w, "invalid push event payload", http.StatusBadRequest)
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid push event payload"})
 		return
 	}
 
 	branch := webhook.BranchFromRef(ev.Ref)
 
-	// Look up the workspace by repo URL to find workspaceID, defaultBranch, and branchPattern.
 	repoURL := ev.Repository.CloneURL
 	if repoURL == "" {
 		repoURL = ev.Repository.HTMLURL
 	}
-	wsInfo, dbErr := h.findWorkspaceByRepoURL(r.Context(), repoURL)
+	wsInfo, dbErr := h.findWorkspaceByRepoURL(c.Request.Context(), repoURL)
 	if dbErr != nil {
-		// Unknown repo — not an error from our side, just ignore.
 		log.Info().Str("repo_url", repoURL).Msg("webhook: repo not registered")
-		httputil.WriteOK(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "repo not registered"})
+		httputil.WriteOK(c, http.StatusOK, map[string]string{"status": "ignored", "reason": "repo not registered"})
 		return
 	}
 
 	info := webhook.ClassifyBranch(branch, wsInfo.defaultBranch, wsInfo.branchPattern)
 	switch info.Kind {
 	case webhook.BranchIgnored:
-		httputil.WriteOK(w, http.StatusOK, map[string]string{"status": "ignored", "branch": branch})
-		return
+		httputil.WriteOK(c, http.StatusOK, map[string]string{"status": "ignored", "branch": branch})
 
 	case webhook.BranchBase:
 		payloads := basePushTargetedSyncPayloads(wsInfo, branch, ev)
 		if len(payloads) == 0 {
-			httputil.WriteOK(w, http.StatusOK, map[string]string{
+			httputil.WriteOK(c, http.StatusOK, map[string]string{
 				"status":      "ignored",
 				"branch_kind": "base",
 				"reason":      "no feature artifact paths",
@@ -90,10 +81,10 @@ func (h *ServiceHandler) WebhookHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		if err := h.enqueueWorkspaceSyncs(payloads); err != nil {
 			log.Error().Err(err).Str("workspace_id", wsInfo.workspaceID).Str("branch", branch).Msg("webhook: enqueue base targeted sync failed")
-			http.Error(w, "enqueue targeted sync failed", http.StatusServiceUnavailable)
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "enqueue targeted sync failed"})
 			return
 		}
-		httputil.WriteOK(w, http.StatusOK, map[string]string{
+		httputil.WriteOK(c, http.StatusOK, map[string]string{
 			"status":      "queued",
 			"branch_kind": "base",
 			"mode":        "targeted",
@@ -102,10 +93,10 @@ func (h *ServiceHandler) WebhookHandler(w http.ResponseWriter, r *http.Request) 
 	case webhook.BranchFeature:
 		if err := h.enqueueTargetedSync(wsInfo, info.FeatureID, branch, "webhook_feature"); err != nil {
 			log.Error().Err(err).Str("workspace_id", wsInfo.workspaceID).Str("feature_id", info.FeatureID).Msg("webhook: enqueue feature targeted sync failed")
-			http.Error(w, "enqueue targeted sync failed", http.StatusServiceUnavailable)
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "enqueue targeted sync failed"})
 			return
 		}
-		httputil.WriteOK(w, http.StatusOK, map[string]string{
+		httputil.WriteOK(c, http.StatusOK, map[string]string{
 			"status":      "queued",
 			"branch_kind": "feature",
 			"feature_id":  info.FeatureID,
@@ -114,10 +105,10 @@ func (h *ServiceHandler) WebhookHandler(w http.ResponseWriter, r *http.Request) 
 	case webhook.BranchTask:
 		if err := h.enqueueTaskSync(wsInfo.workspaceID, info.FeatureID, info.TaskID); err != nil {
 			log.Error().Err(err).Str("workspace_id", wsInfo.workspaceID).Str("feature_id", info.FeatureID).Str("task_id", info.TaskID).Msg("webhook: enqueue task sync failed")
-			http.Error(w, "enqueue task sync failed", http.StatusServiceUnavailable)
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "enqueue task sync failed"})
 			return
 		}
-		httputil.WriteOK(w, http.StatusOK, map[string]string{
+		httputil.WriteOK(c, http.StatusOK, map[string]string{
 			"status":      "queued",
 			"branch_kind": "task",
 			"feature_id":  info.FeatureID,
@@ -226,7 +217,6 @@ func (h *ServiceHandler) enqueueTaskSync(workspaceID, featureID, taskID string) 
 	}
 	info, err := h.Queue.Enqueue(task)
 	if err != nil {
-		// ErrTaskIDConflict means duplicate — already queued, this is expected with Unique(24h).
 		if pgutil2.IsDedupeError(err) {
 			log.Info().Str("workspace_id", workspaceID).Str("feature_id", featureID).Str("task_id", taskID).Msg("task:sync already queued (dedup)")
 			return nil

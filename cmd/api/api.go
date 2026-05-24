@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
@@ -62,18 +63,24 @@ func runServe(_ *cobra.Command, _ []string) error {
 		WebhookSecret: cfg.GitHub.WebhookSecret,
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintln(w, `{"status":"ok"}`)
+	if cfg.API.HTTP.Mode == "release" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	router := gin.New()
+	router.HandleMethodNotAllowed = true
+	router.Use(gin.Recovery())
+
+	router.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	mux.HandleFunc("/internal/workspaces/import", h.ImportWorkspaceHandler)
-	mux.HandleFunc("/internal/workspaces/", h.InternalWorkspaceHandler)
-	mux.HandleFunc("/webhook", h.WebhookHandler)
+	router.POST("/internal/workspaces/import", h.ImportWorkspaceHandler)
+	router.POST("/internal/workspaces/:id/sync", h.SyncWorkspaceHandler)
+	router.POST("/webhook", h.WebhookHandler)
 
 	srv := &http.Server{
 		Addr:         cfg.API.HTTP.Address,
-		Handler:      mux,
+		Handler:      router,
 		ReadTimeout:  120 * time.Second,
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  60 * time.Second,

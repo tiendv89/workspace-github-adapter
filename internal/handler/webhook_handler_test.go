@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -25,6 +26,16 @@ import (
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 	"github.com/tiendv89/workspace-github-adapter/internal/webhook"
 )
+
+func testRouter(h *ServiceHandler) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.HandleMethodNotAllowed = true
+	r.POST("/webhook", h.WebhookHandler)
+	r.POST("/internal/workspaces/import", h.ImportWorkspaceHandler)
+	r.POST("/internal/workspaces/:id/sync", h.SyncWorkspaceHandler)
+	return r
+}
 
 // buildSig computes the HMAC-SHA256 signature for a payload.
 func buildSig(body []byte) string {
@@ -43,7 +54,7 @@ func TestWebhookHandler_InvalidSignature(t *testing.T) {
 	req.Header.Set("X-Hub-Signature-256", "sha256=badsignature")
 	rec := httptest.NewRecorder()
 
-	h.WebhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
@@ -54,7 +65,7 @@ func TestWebhookHandler_MethodNotAllowed(t *testing.T) {
 	h := &ServiceHandler{}
 	req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
 	rec := httptest.NewRecorder()
-	h.WebhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", rec.Code)
 	}
@@ -69,7 +80,7 @@ func TestWebhookHandler_NonPushEvent(t *testing.T) {
 	req.Header.Set("X-GitHub-Event", "pull_request")
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
-	h.WebhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
@@ -161,7 +172,7 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
-	h.WebhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -194,7 +205,7 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
-	h.WebhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 so GitHub can retry, got %d body=%s", rec.Code, rec.Body.String())
@@ -223,7 +234,7 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
-	h.WebhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -259,7 +270,7 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
-	h.WebhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -293,7 +304,7 @@ func TestImportWorkspaceHandler_GitHubNotFoundDoesNotPersistPlaceholder(t *testi
 	}`))
 	rec := httptest.NewRecorder()
 
-	h.ImportWorkspaceHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing GitHub repo before DB write, got %d body=%s", rec.Code, rec.Body.String())
@@ -334,7 +345,7 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 	}`))
 	rec := httptest.NewRecorder()
 
-	h.ImportWorkspaceHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for duplicate slug on different repo, got %d body=%s", rec.Code, rec.Body.String())

@@ -1,45 +1,30 @@
 package httputil
 
 import (
-	"encoding/json"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 )
 
-// WriteOK encodes value as JSON and writes it with the given HTTP status.
-func WriteOK(w http.ResponseWriter, status int, value interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+// WriteOK writes value as JSON with the given HTTP status.
+func WriteOK(c *gin.Context, status int, value interface{}) {
+	c.JSON(status, value)
 }
 
 // WriteSourceError maps a domain.SourceError to the appropriate HTTP status and writes the JSON body.
-func WriteSourceError(w http.ResponseWriter, se domain.SourceError) {
-	status := sourceErrorStatus(se)
-	WriteOK(w, status, domain.FromSourceError(se, nil))
+func WriteSourceError(c *gin.Context, se domain.SourceError) {
+	c.AbortWithStatusJSON(sourceErrorStatus(se), domain.FromSourceError(se, nil))
 }
 
 // WriteAnyError writes a SourceError if err is one, otherwise wraps it in a generic database error.
-func WriteAnyError(w http.ResponseWriter, err error) {
-	var se domain.SourceError
-	if isSourceError(err, &se) {
-		WriteSourceError(w, se)
+func WriteAnyError(c *gin.Context, err error) {
+	if srcErr, ok := err.(domain.SourceError); ok {
+		WriteSourceError(c, srcErr)
 		return
 	}
-	WriteSourceError(w, domain.NewDatabaseError(domain.ErrDatabaseQuery, err.Error()))
-}
-
-func isSourceError(err error, target *domain.SourceError) bool {
-	if err == nil {
-		return false
-	}
-	se, ok := err.(domain.SourceError)
-	if ok {
-		*target = se
-		return true
-	}
-	return false
+	WriteSourceError(c, domain.NewDatabaseError(domain.ErrDatabaseQuery, err.Error()))
 }
 
 func sourceErrorStatus(se domain.SourceError) int {
