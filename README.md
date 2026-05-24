@@ -2,12 +2,12 @@
 
 Bridges GitHub management repositories and a PostgreSQL workspace database. Two binaries:
 
-- **adapter-service** — HTTP server that validates incoming requests, runs metadata preflight checks against GitHub, and enqueues async jobs.
-- **adapter-worker** — Redis/asynq worker that executes workspace syncs and task syncs.
+- **api** — HTTP server that validates incoming requests, runs metadata preflight checks against GitHub, and enqueues async jobs.
+- **worker** — Redis/asynq worker that executes workspace syncs and task syncs.
 
 ## Quick start with Docker Compose
 
-Starts PostgreSQL, Redis, `adapter-service`, and `adapter-worker`:
+Starts PostgreSQL, Redis, `api`, and `worker`:
 
 ```bash
 cp .env.example .env
@@ -29,7 +29,7 @@ GITHUB_WEBHOOK_SECRET='shared-webhook-secret' docker compose up --build
 | `GITHUB_WEBHOOK_SECRET` | yes (service) | — | HMAC secret for `POST /webhook` signature verification |
 | `GITHUB_TOKEN` | no | — | GitHub token for private repos or higher API rate limits |
 | `REDIS_URL` | no | `redis://127.0.0.1:6379/0` | Redis connection URL |
-| `PORT` | no | `8080` | HTTP listen port for adapter-service |
+| `PORT` | no | `8080` | HTTP listen port for api |
 | `STALE_THRESHOLD_MINUTES` | no | `30` | Minutes after which a successful sync is considered stale |
 
 ## API
@@ -83,7 +83,7 @@ docker run --rm -p 6379:6379 redis:7-alpine
 DATABASE_URL='postgres://user:pass@localhost:5432/db?sslmode=disable' \
 REDIS_URL='redis://localhost:6379/0' \
 GITHUB_TOKEN='optional_token' \
-go run ./cmd/adapter-worker
+go run ./cmd/worker
 ```
 
 ```bash
@@ -91,7 +91,7 @@ DATABASE_URL='postgres://user:pass@localhost:5432/db?sslmode=disable' \
 REDIS_URL='redis://localhost:6379/0' \
 GITHUB_TOKEN='optional_token' \
 GITHUB_WEBHOOK_SECRET='shared-webhook-secret' \
-go run ./cmd/adapter-service
+go run ./cmd/api
 ```
 
 ## Development

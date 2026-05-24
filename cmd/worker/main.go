@@ -23,7 +23,7 @@ import (
 func main() {
 	var cfgPath string
 
-	root := &cobra.Command{Use: "adapter-worker"}
+	root := &cobra.Command{Use: "worker"}
 	root.PersistentFlags().StringVarP(&cfgPath, "config", "c", "configs/config.yaml", "path to config YAML")
 
 	root.AddCommand(workCmd(&cfgPath))
@@ -89,7 +89,7 @@ func runWork(cfgPath string) error {
 	mux.HandleFunc(queue.TypeWorkspaceSync, h.HandleWorkspaceSync)
 	mux.HandleFunc(queue.TypeTaskSync, h.HandleTaskSync)
 
-	log.Info().Msg("adapter-worker listening for Redis queue tasks")
+	log.Info().Msg("worker listening for Redis queue tasks")
 	if err := srv.Run(mux); err != nil {
 		return fmt.Errorf("worker stopped: %w", err)
 	}

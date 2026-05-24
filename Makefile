@@ -3,10 +3,10 @@
 GO = go
 
 run-service:
-	$(GO) run ./cmd/adapter-service serve --config configs/config.yaml
+	$(GO) run ./cmd/api serve --config configs/config.yaml
 
 run-worker:
-	$(GO) run ./cmd/adapter-worker work --config configs/config.yaml
+	$(GO) run ./cmd/worker work --config configs/config.yaml
 
 lint:
 	golangci-lint run

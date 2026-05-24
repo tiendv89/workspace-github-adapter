@@ -1,5 +1,5 @@
 // Package webhook implements GitHub webhook signature verification, push event
-// parsing, and branch routing for adapter-service.
+// parsing, and branch routing for api.
 package webhook
 
 import (

@@ -26,7 +26,7 @@ import (
 func main() {
 	var cfgPath string
 
-	root := &cobra.Command{Use: "adapter-service"}
+	root := &cobra.Command{Use: "api"}
 	root.PersistentFlags().StringVarP(&cfgPath, "config", "c", "configs/config.yaml", "path to config YAML")
 
 	root.AddCommand(serveCmd(&cfgPath))
@@ -59,7 +59,7 @@ func runServe(cfgPath string) error {
 	zerolog.SetGlobalLevel(level)
 
 	if cfg.GitHub.WebhookSecret == "" {
-		log.Fatal().Msg("GITHUB_WEBHOOK_SECRET is required for adapter-service webhooks")
+		log.Fatal().Msg("GITHUB_WEBHOOK_SECRET is required for api webhooks")
 	}
 
 	redisOpt := queue.RedisOpt(cfg.Redis.Addr())
@@ -109,14 +109,14 @@ func runServe(cfgPath string) error {
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		log.Info().Str("addr", cfg.API.HTTP.Address).Msg("adapter-service listening")
+		log.Info().Str("addr", cfg.API.HTTP.Address).Msg("api listening")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msg("listen")
 		}
 	}()
 
 	<-done
-	log.Info().Msg("adapter-service: shutting down")
+	log.Info().Msg("api: shutting down")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

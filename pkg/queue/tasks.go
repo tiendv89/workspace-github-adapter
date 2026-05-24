@@ -16,7 +16,7 @@ const (
 	QueueTaskSync = "task-sync"
 )
 
-// WorkspaceSyncPayload is the payload consumed by adapter-worker.
+// WorkspaceSyncPayload is the payload consumed by worker.
 type WorkspaceSyncPayload struct {
 	WorkspaceID   string `json:"workspace_id"`
 	RepoURL       string `json:"repo_url"`
