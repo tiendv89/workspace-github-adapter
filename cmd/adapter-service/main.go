@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,9 +20,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
+	"github.com/tiendv89/workspace-github-adapter/configs"
 	dbadapter "github.com/tiendv89/workspace-github-adapter/internal/adapter/db"
-	"github.com/tiendv89/workspace-github-adapter/internal/config"
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 	ghadapter "github.com/tiendv89/workspace-github-adapter/internal/github"
@@ -61,17 +62,32 @@ type importWorkspaceResponse struct {
 }
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("config: %v", err)
-	}
-	if cfg.WebhookSecret == "" {
-		log.Fatal("GITHUB_WEBHOOK_SECRET is required for adapter-service webhooks")
+	cfgPath := "configs/config.yaml"
+	if v := os.Getenv("CONFIG_PATH"); v != "" {
+		cfgPath = v
 	}
 
-	redisOpt, err := queue.RedisOpt(cfg.RedisURL)
+	cfg, err := configs.Load(cfgPath)
 	if err != nil {
-		log.Fatalf("redis: %v", err)
+		// Use stderr before zerolog is initialized.
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	level, err := zerolog.ParseLevel(cfg.Log.Level)
+	if err != nil {
+		level = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(level)
+
+	if cfg.GitHub.WebhookSecret == "" {
+		log.Fatal().Msg("GITHUB_WEBHOOK_SECRET is required for adapter-service webhooks")
+	}
+
+	redisOpt, err := queue.RedisOpt(cfg.Redis.URL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("redis")
 	}
 	client := asynq.NewClient(redisOpt)
 	defer func() { _ = client.Close() }()
@@ -79,23 +95,23 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := pgxpool.New(ctx, cfg.Database.URL)
 	if err != nil {
-		log.Fatalf("pgxpool.New: %v", err) //nolint:gocritic
+		log.Fatal().Err(err).Msg("pgxpool.New")
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("ping db: %v", err)
+		log.Fatal().Err(err).Msg("ping db")
 	}
 
 	h := &serviceHandler{
 		db:            dbadapter.New(pool),
 		q:             database.New(pool),
 		pool:          pool,
-		github:        ghadapter.New(cfg.GitHubToken),
-		token:         cfg.GitHubToken,
+		github:        ghadapter.New(cfg.GitHub.Token),
+		token:         cfg.GitHub.Token,
 		queue:         client,
-		webhookSecret: cfg.WebhookSecret,
+		webhookSecret: cfg.GitHub.WebhookSecret,
 	}
 
 	mux := http.NewServeMux()
@@ -108,7 +124,7 @@ func main() {
 	mux.HandleFunc("/webhook", h.webhookHandler)
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
 		Handler:      mux,
 		ReadTimeout:  120 * time.Second,
 		WriteTimeout: 120 * time.Second,
@@ -119,20 +135,20 @@ func main() {
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("adapter-service listening on :%d", cfg.Port)
+		log.Info().Int("port", cfg.Server.Port).Msg("adapter-service listening")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+			log.Fatal().Err(err).Msg("listen")
 		}
 	}()
 
 	<-done
-	log.Println("adapter-service: shutting down")
+	log.Info().Msg("adapter-service: shutting down")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown: %v", err)
+		log.Error().Err(err).Msg("shutdown")
 	}
 }
 
@@ -242,7 +258,7 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 	info, err := h.queue.Enqueue(task, asynq.TaskID(workspaceSyncTaskID(payload)))
 	if err != nil {
 		if failErr := h.markRunFailed(r.Context(), run.ID, "ENQUEUE_FAILED", err.Error()); failErr != nil {
-			log.Printf("mark import enqueue failed run failed workspace_id=%s run_id=%s: %v", workspaceID, syncRunID, failErr)
+			log.Error().Err(failErr).Str("workspace_id", workspaceID).Str("run_id", syncRunID).Msg("mark import enqueue failed run failed")
 		}
 		if isDedupeError(err) {
 			writeJSON(w, http.StatusAccepted, map[string]string{
@@ -376,7 +392,7 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 	wsInfo, dbErr := h.findWorkspaceByRepoURL(r.Context(), repoURL)
 	if dbErr != nil {
 		// Unknown repo — not an error from our side, just ignore.
-		log.Printf("webhook: repo not registered: %s", repoURL)
+		log.Warn().Str("repo_url", repoURL).Msg("webhook: repo not registered")
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored", "reason": "repo not registered"})
 		return
 	}
@@ -398,8 +414,7 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err := h.enqueueWorkspaceSyncs(payloads); err != nil {
-			log.Printf("webhook: enqueue base targeted sync failed workspace=%s branch=%s: %v",
-				wsInfo.workspaceID, branch, err)
+			log.Error().Err(err).Str("workspace_id", wsInfo.workspaceID).Str("branch", branch).Msg("webhook: enqueue base targeted sync failed")
 			http.Error(w, "enqueue targeted sync failed", http.StatusServiceUnavailable)
 			return
 		}
@@ -411,8 +426,7 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 
 	case webhook.BranchFeature:
 		if err := h.enqueueTargetedSync(wsInfo, info.FeatureID, branch, "webhook_feature"); err != nil {
-			log.Printf("webhook: enqueue feature targeted sync failed workspace=%s feature=%s: %v",
-				wsInfo.workspaceID, info.FeatureID, err)
+			log.Error().Err(err).Str("workspace_id", wsInfo.workspaceID).Str("feature_id", info.FeatureID).Msg("webhook: enqueue feature targeted sync failed")
 			http.Error(w, "enqueue targeted sync failed", http.StatusServiceUnavailable)
 			return
 		}
@@ -424,8 +438,7 @@ func (h *serviceHandler) webhookHandler(w http.ResponseWriter, r *http.Request) 
 
 	case webhook.BranchTask:
 		if err := h.enqueueTaskSync(wsInfo.workspaceID, info.FeatureID, info.TaskID); err != nil {
-			log.Printf("webhook: enqueue task sync failed workspace=%s feature=%s task=%s: %v",
-				wsInfo.workspaceID, info.FeatureID, info.TaskID, err)
+			log.Error().Err(err).Str("workspace_id", wsInfo.workspaceID).Str("feature_id", info.FeatureID).Str("task_id", info.TaskID).Msg("webhook: enqueue task sync failed")
 			http.Error(w, "enqueue task sync failed", http.StatusServiceUnavailable)
 			return
 		}
@@ -546,14 +559,13 @@ func (h *serviceHandler) enqueueTaskSync(workspaceID, featureID, taskID string) 
 	}
 	info, err := h.queue.Enqueue(task)
 	if err != nil {
-		// ErrTaskIDConflict means duplicate — already queued, this is expected with Unique(24h).
 		if isDedupeError(err) {
-			log.Printf("task:sync already queued (dedup) workspace=%s feature=%s task=%s", workspaceID, featureID, taskID)
+			log.Debug().Str("workspace_id", workspaceID).Str("feature_id", featureID).Str("task_id", taskID).Msg("task:sync already queued (dedup)")
 			return nil
 		}
 		return fmt.Errorf("enqueue task:sync: %w", err)
 	}
-	log.Printf("task:sync enqueued id=%s workspace=%s feature=%s task=%s", info.ID, workspaceID, featureID, taskID)
+	log.Info().Str("id", info.ID).Str("workspace_id", workspaceID).Str("feature_id", featureID).Str("task_id", taskID).Msg("task:sync enqueued")
 	return nil
 }
 
