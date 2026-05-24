@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
+	"github.com/tiendv89/workspace-github-adapter/internal/pgutil"
 	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 	"github.com/tiendv89/workspace-github-adapter/internal/webhook"
 )
@@ -33,7 +34,7 @@ func buildSig(secret string, body []byte) string { //nolint:unparam
 
 // TestWebhookHandler_InvalidSignature verifies that requests with wrong HMAC are rejected.
 func TestWebhookHandler_InvalidSignature(t *testing.T) {
-	h := &serviceHandler{webhookSecret: "mysecret"}
+	h := &ServiceHandler{WebhookSecret: "mysecret"}
 
 	body := []byte(`{"ref":"refs/heads/main","repository":{"clone_url":"https://github.com/o/r"},"commits":[]}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
@@ -41,7 +42,7 @@ func TestWebhookHandler_InvalidSignature(t *testing.T) {
 	req.Header.Set("X-Hub-Signature-256", "sha256=badsignature")
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	h.WebhookHandler(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
@@ -49,10 +50,10 @@ func TestWebhookHandler_InvalidSignature(t *testing.T) {
 
 // TestWebhookHandler_MethodNotAllowed verifies that non-POST requests are rejected.
 func TestWebhookHandler_MethodNotAllowed(t *testing.T) {
-	h := &serviceHandler{}
+	h := &ServiceHandler{}
 	req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
 	rec := httptest.NewRecorder()
-	h.webhookHandler(rec, req)
+	h.WebhookHandler(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", rec.Code)
 	}
@@ -61,13 +62,13 @@ func TestWebhookHandler_MethodNotAllowed(t *testing.T) {
 // TestWebhookHandler_NonPushEvent verifies that non-push events are ignored with 200.
 func TestWebhookHandler_NonPushEvent(t *testing.T) {
 	secret := "mysecret"
-	h := &serviceHandler{webhookSecret: secret}
+	h := &ServiceHandler{WebhookSecret: secret}
 	body := []byte(`{}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "pull_request")
 	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
 	rec := httptest.NewRecorder()
-	h.webhookHandler(rec, req)
+	h.WebhookHandler(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
@@ -143,10 +144,10 @@ func TestBasePushTargetedSyncPayloads_NoFeaturePaths(t *testing.T) {
 func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 	secret := "mysecret"
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
-		queue:         enqueuer,
-		webhookSecret: secret,
+	h := &ServiceHandler{
+		Q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
+		Queue:         enqueuer,
+		WebhookSecret: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/main",
@@ -159,7 +160,7 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	h.WebhookHandler(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -176,10 +177,10 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 
 func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T) {
 	secret := "mysecret"
-	h := &serviceHandler{
-		q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
-		queue:         &recordingEnqueuer{err: errors.New("redis unavailable")},
-		webhookSecret: secret,
+	h := &ServiceHandler{
+		Q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
+		Queue:         &recordingEnqueuer{err: errors.New("redis unavailable")},
+		WebhookSecret: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/feature/workspace-data-backend-T7",
@@ -192,7 +193,7 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	h.WebhookHandler(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 so GitHub can retry, got %d body=%s", rec.Code, rec.Body.String())
@@ -202,13 +203,13 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	secret := "mysecret"
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		q: database.New(&webhookSourceDB{
+	h := &ServiceHandler{
+		Q: database.New(&webhookSourceDB{
 			src:       testGitHubSource(t),
 			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
 		}),
-		queue:         enqueuer,
-		webhookSecret: secret,
+		Queue:         enqueuer,
+		WebhookSecret: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/workspaces/workspace-data-backend/tasks/T7",
@@ -221,7 +222,7 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	h.WebhookHandler(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -238,13 +239,13 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	secret := "mysecret"
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		q: database.New(&webhookSourceDB{
+	h := &ServiceHandler{
+		Q: database.New(&webhookSourceDB{
 			src:       testGitHubSource(t),
 			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
 		}),
-		queue:         enqueuer,
-		webhookSecret: secret,
+		Queue:         enqueuer,
+		WebhookSecret: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/workspaces/workspace-data-backend",
@@ -257,7 +258,7 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	h.WebhookHandler(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -278,11 +279,11 @@ func TestImportWorkspaceHandler_GitHubNotFoundDoesNotPersistPlaceholder(t *testi
 	db := &recordingWorkspaceDB{}
 	store := &importNoRowsDB{}
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		db:     db,
-		q:      database.New(store),
-		github: github,
-		queue:  enqueuer,
+	h := &ServiceHandler{
+		DB:     db,
+		Q:      database.New(store),
+		GitHub: github,
+		Queue:  enqueuer,
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
@@ -291,7 +292,7 @@ func TestImportWorkspaceHandler_GitHubNotFoundDoesNotPersistPlaceholder(t *testi
 	}`))
 	rec := httptest.NewRecorder()
 
-	h.importWorkspaceHandler(rec, req)
+	h.ImportWorkspaceHandler(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing GitHub repo before DB write, got %d body=%s", rec.Code, rec.Body.String())
@@ -319,10 +320,10 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 	}
 	store := &importSlugConflictDB{}
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		q:      database.New(store),
-		github: github,
-		queue:  enqueuer,
+	h := &ServiceHandler{
+		Q:      database.New(store),
+		GitHub: github,
+		Queue:  enqueuer,
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
@@ -332,7 +333,7 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 	}`))
 	rec := httptest.NewRecorder()
 
-	h.importWorkspaceHandler(rec, req)
+	h.ImportWorkspaceHandler(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for duplicate slug on different repo, got %d body=%s", rec.Code, rec.Body.String())
@@ -355,20 +356,20 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 // TestIsDedupeError verifies dedupe error detection.
 func TestIsDedupeError_Match(t *testing.T) {
 	err := &fakeError{"task already exists"}
-	if !isDedupeError(err) {
+	if !pgutil.IsDedupeError(err) {
 		t.Error("expected dedup error to match")
 	}
 }
 
 func TestIsDedupeError_NoMatch(t *testing.T) {
 	err := &fakeError{"some other error"}
-	if isDedupeError(err) {
+	if pgutil.IsDedupeError(err) {
 		t.Error("expected non-dedup error to not match")
 	}
 }
 
 func TestIsDedupeError_Nil(t *testing.T) {
-	if isDedupeError(nil) {
+	if pgutil.IsDedupeError(nil) {
 		t.Error("expected nil error to not match")
 	}
 }
@@ -676,9 +677,9 @@ func testWorkspaceFromID(workspaceID pgtype.UUID, branchPattern string) database
 
 func mustPGUUID(t *testing.T, raw string) pgtype.UUID {
 	t.Helper()
-	var uid pgtype.UUID
-	if err := uid.Scan(raw); err != nil {
-		t.Fatalf("scan uuid %s: %v", raw, err)
+	uid, err := pgutil.PgUUID(raw)
+	if err != nil {
+		t.Fatalf("parse uuid %s: %v", raw, err)
 	}
 	return uid
 }

@@ -2,12 +2,11 @@
 
 GO = go
 
-# Stub targets until cobra subcommands are added in T7
 run-service:
-	$(GO) run ./cmd/adapter-service
+	$(GO) run ./cmd/adapter-service serve --config configs/config.yaml
 
 run-worker:
-	$(GO) run ./cmd/adapter-worker
+	$(GO) run ./cmd/adapter-worker work --config configs/config.yaml
 
 lint:
 	golangci-lint run
