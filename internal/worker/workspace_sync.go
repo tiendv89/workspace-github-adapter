@@ -11,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
+	"github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
+	"github.com/tiendv89/workspace-github-adapter/pkg/urlutil"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
-	"github.com/tiendv89/workspace-github-adapter/internal/pgutil"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
-	"github.com/tiendv89/workspace-github-adapter/internal/urlutil"
 )
 
 // HandleWorkspaceSync processes workspace:sync jobs.

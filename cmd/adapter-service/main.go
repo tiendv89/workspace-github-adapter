@@ -14,13 +14,13 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	dbadapter "github.com/tiendv89/workspace-github-adapter/pkg/adapter/db"
+	ghadapter "github.com/tiendv89/workspace-github-adapter/pkg/github"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
 	"github.com/tiendv89/workspace-github-adapter/configs"
-	dbadapter "github.com/tiendv89/workspace-github-adapter/internal/adapter/db"
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
-	ghadapter "github.com/tiendv89/workspace-github-adapter/internal/github"
 	"github.com/tiendv89/workspace-github-adapter/internal/handler"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 )
 
 func main() {
@@ -62,17 +62,14 @@ func runServe(cfgPath string) error {
 		log.Fatal().Msg("GITHUB_WEBHOOK_SECRET is required for adapter-service webhooks")
 	}
 
-	redisOpt, err := queue.RedisOpt(cfg.Redis.URL)
-	if err != nil {
-		return fmt.Errorf("redis: %w", err)
-	}
+	redisOpt := queue.RedisOpt(cfg.Redis.Addr())
 	client := asynq.NewClient(redisOpt)
 	defer func() { _ = client.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, cfg.Database.URL)
+	pool, err := pgxpool.New(ctx, cfg.DB.DSN())
 	if err != nil {
 		return fmt.Errorf("pgxpool.New: %w", err)
 	}
@@ -101,7 +98,7 @@ func runServe(cfgPath string) error {
 	mux.HandleFunc("/webhook", h.WebhookHandler)
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
+		Addr:         cfg.API.HTTP.Address,
 		Handler:      mux,
 		ReadTimeout:  120 * time.Second,
 		WriteTimeout: 120 * time.Second,
@@ -112,7 +109,7 @@ func runServe(cfgPath string) error {
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		log.Info().Int("port", cfg.Server.Port).Msg("adapter-service listening")
+		log.Info().Str("addr", cfg.API.HTTP.Address).Msg("adapter-service listening")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msg("listen")
 		}

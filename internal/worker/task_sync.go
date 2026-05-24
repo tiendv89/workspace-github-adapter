@@ -10,11 +10,11 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
+	"github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
-	"github.com/tiendv89/workspace-github-adapter/internal/pgutil"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 )
 
 // HandleTaskSync processes task:sync jobs from the task-sync queue.

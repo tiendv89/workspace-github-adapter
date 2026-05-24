@@ -8,48 +8,78 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Config holds all runtime configuration for both adapter binaries.
 type Config struct {
-	Log      LogConfig      `mapstructure:"log"`
-	Server   ServerConfig   `mapstructure:"server"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	GitHub   GitHubConfig   `mapstructure:"github"`
-	Sync     SyncConfig     `mapstructure:"sync"`
+	Log    LogConfig    `mapstructure:"log"`
+	API    APIConfig    `mapstructure:"api"`
+	DB     DBConfig     `mapstructure:"db"`
+	Redis  RedisConfig  `mapstructure:"redis"`
+	GitHub GitHubConfig `mapstructure:"github"`
+	Sync   SyncConfig   `mapstructure:"sync"`
 }
 
-// LogConfig controls zerolog output.
 type LogConfig struct {
 	Level string `mapstructure:"level"`
 }
 
-// ServerConfig holds HTTP server settings.
-type ServerConfig struct {
-	Port int `mapstructure:"port"`
+type APIConfig struct {
+	HTTP HTTPConfig `mapstructure:"http"`
+	Auth AuthConfig `mapstructure:"auth"`
 }
 
-// DatabaseConfig holds PostgreSQL connection settings.
-type DatabaseConfig struct {
-	URL string `mapstructure:"url"`
+type HTTPConfig struct {
+	Address string `mapstructure:"address"`
+	Mode    string `mapstructure:"mode"`
 }
 
-// RedisConfig holds Redis connection settings.
+type AuthConfig struct {
+	AdminAPIKey string `mapstructure:"admin_api_key"`
+}
+
+type DBConfig struct {
+	Host                string `mapstructure:"host"`
+	Port                int    `mapstructure:"port"`
+	DBName              string `mapstructure:"db_name"`
+	User                string `mapstructure:"user"`
+	Password            string `mapstructure:"password"`
+	ConnLifeTimeSeconds int    `mapstructure:"conn_life_time_seconds"`
+	MaxIdleConns        int    `mapstructure:"max_idle_conns"`
+	MaxOpenConns        int    `mapstructure:"max_open_conns"`
+	LogLevel            int    `mapstructure:"log_level"`
+	AutoMigration       bool   `mapstructure:"auto_migration"`
+	MigrationDir        string `mapstructure:"migration_dir"`
+}
+
+func (c *DBConfig) DSN() string {
+	return fmt.Sprintf(
+		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
+		c.User, c.Password, c.Host, c.Port, c.DBName,
+	)
+}
+
 type RedisConfig struct {
-	URL string `mapstructure:"url"`
+	InitAddress  []string `mapstructure:"init_address"`
+	SelectDB     int      `mapstructure:"select_db"`
+	Username     string   `mapstructure:"username"`
+	Password     string   `mapstructure:"password"`
+	DisableCache bool     `mapstructure:"disable_cache"`
 }
 
-// GitHubConfig holds GitHub API credentials.
+func (c *RedisConfig) Addr() string {
+	if len(c.InitAddress) == 0 {
+		return "127.0.0.1:6379"
+	}
+	return c.InitAddress[0]
+}
+
 type GitHubConfig struct {
 	Token         string `mapstructure:"token"`
 	WebhookSecret string `mapstructure:"webhook_secret"`
 }
 
-// SyncConfig holds workspace sync settings.
 type SyncConfig struct {
 	StaleThresholdMinutes int `mapstructure:"stale_threshold_minutes"`
 }
 
-// StaleThreshold returns the configured duration for stale threshold.
 func (c *Config) StaleThreshold() time.Duration {
 	m := c.Sync.StaleThresholdMinutes
 	if m <= 0 {
@@ -60,12 +90,12 @@ func (c *Config) StaleThreshold() time.Duration {
 
 // Load reads configuration from the YAML file at path and applies environment-variable overrides.
 // If the file does not exist, env-var values and defaults are used directly.
-// Environment variables use underscores as separators; e.g. SERVER_PORT overrides server.port.
+// Environment variables use underscores as separators; e.g. API_HTTP_ADDRESS overrides api.http.address.
 func Load(path string) (*Config, error) {
 	v := viper.New()
 
 	v.SetDefault("log.level", "info")
-	v.SetDefault("server.port", 8080)
+	v.SetDefault("api.http.address", ":8080")
 	v.SetDefault("sync.stale_threshold_minutes", 30)
 
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -73,7 +103,6 @@ func Load(path string) (*Config, error) {
 
 	v.SetConfigFile(path)
 	if err := v.ReadInConfig(); err != nil {
-		// Allow a missing config file; env vars + defaults are sufficient.
 		if !isNotFound(err) {
 			return nil, fmt.Errorf("read config %s: %w", path, err)
 		}
@@ -83,13 +112,12 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
-	if cfg.Database.URL == "" {
-		return nil, fmt.Errorf("database.url is required")
+	if cfg.DB.Host == "" {
+		return nil, fmt.Errorf("db.host is required")
 	}
 	return &cfg, nil
 }
 
-// isNotFound returns true when viper reports that the config file was not found.
 func isNotFound(err error) bool {
 	_, ok := err.(viper.ConfigFileNotFoundError)
 	return ok || (err != nil && strings.Contains(err.Error(), "no such file"))

@@ -1,14 +1,33 @@
 log:
-  level: info
+  level: debug
 
-server:
-  port: 8080
+api:
+  http:
+    address: ":8081"
+    mode: debug
+  auth:
+    admin_api_key: "123456"
 
-database:
-  url: "postgres://user:password@localhost:5432/workspace?sslmode=disable"
+db:
+  host: 127.0.0.1
+  port: 5432
+  db_name: workspace_github_adapter
+  user: workspace_adapter
+  password: workspace_adapter
+  conn_life_time_seconds: 300
+  max_idle_conns: 10
+  max_open_conns: 30
+  log_level: 1
+  auto_migration: false
+  migration_dir: "file://migrations"
 
 redis:
-  url: "redis://localhost:6379"
+  init_address:
+    - localhost:6379
+  select_db:
+  username:
+  password:
+  disable_cache: false
 
 github:
   token: ""

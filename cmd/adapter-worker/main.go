@@ -11,12 +11,12 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	dbadapter "github.com/tiendv89/workspace-github-adapter/pkg/adapter/db"
+	ghadapter "github.com/tiendv89/workspace-github-adapter/pkg/github"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
 	"github.com/tiendv89/workspace-github-adapter/configs"
-	dbadapter "github.com/tiendv89/workspace-github-adapter/internal/adapter/db"
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
-	ghadapter "github.com/tiendv89/workspace-github-adapter/internal/github"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 	"github.com/tiendv89/workspace-github-adapter/internal/worker"
 )
 
@@ -55,15 +55,12 @@ func runWork(cfgPath string) error {
 	}
 	zerolog.SetGlobalLevel(level)
 
-	redisOpt, err := queue.RedisOpt(cfg.Redis.URL)
-	if err != nil {
-		return fmt.Errorf("redis: %w", err)
-	}
+	redisOpt := queue.RedisOpt(cfg.Redis.Addr())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, cfg.Database.URL)
+	pool, err := pgxpool.New(ctx, cfg.DB.DSN())
 	if err != nil {
 		return fmt.Errorf("pgxpool.New: %w", err)
 	}

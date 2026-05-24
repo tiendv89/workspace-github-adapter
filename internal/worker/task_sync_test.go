@@ -11,10 +11,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 )
 
 // --- Minimal stubs for domain interfaces ---

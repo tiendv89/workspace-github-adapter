@@ -62,15 +62,11 @@ func NewTaskSyncTask(payload TaskSyncPayload) (*asynq.Task, error) {
 	), nil
 }
 
-// RedisOpt parses REDIS_URL into an asynq Redis connection option.
-// If redisURL is empty, localhost:6379 is used for local development.
-func RedisOpt(redisURL string) (asynq.RedisConnOpt, error) {
-	if redisURL == "" {
-		return asynq.RedisClientOpt{Addr: "127.0.0.1:6379"}, nil
+// RedisOpt returns an asynq Redis connection option for the given host:port address.
+// If addr is empty, localhost:6379 is used for local development.
+func RedisOpt(addr string) asynq.RedisConnOpt {
+	if addr == "" {
+		addr = "127.0.0.1:6379"
 	}
-	opt, err := asynq.ParseRedisURI(redisURL)
-	if err != nil {
-		return nil, fmt.Errorf("parse REDIS_URL: %w", err)
-	}
-	return opt, nil
+	return asynq.RedisClientOpt{Addr: addr}
 }

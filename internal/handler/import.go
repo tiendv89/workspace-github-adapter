@@ -12,13 +12,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
+	"github.com/tiendv89/workspace-github-adapter/pkg/httputil"
+	pgutil2 "github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
+	"github.com/tiendv89/workspace-github-adapter/pkg/urlutil"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
-	"github.com/tiendv89/workspace-github-adapter/internal/httputil"
-	"github.com/tiendv89/workspace-github-adapter/internal/pgutil"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
-	"github.com/tiendv89/workspace-github-adapter/internal/urlutil"
 )
 
 type importWorkspaceRequest struct {
@@ -102,7 +102,7 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 		// Only attempt the duplicate-detection fallback for unique constraint violations.
 		// For infrastructure errors (connection failure, timeout) we return immediately
 		// so they are not masked by a second failing query.
-		if !pgutil.IsUniqueViolation(err) {
+		if !pgutil2.IsUniqueViolation(err) {
 			httputil.WriteAnyError(w, err)
 			return
 		}
@@ -113,7 +113,7 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 			writeExistingImport(w, existing, req.RepoURL, req.DefaultBranch)
 			return
 		}
-		if pgutil.IsUniqueConstraintViolation(err, "workspaces_slug_unique") {
+		if pgutil2.IsUniqueConstraintViolation(err, "workspaces_slug_unique") {
 			httputil.WriteSourceError(w, domain.NewDatabaseConflictError(fmt.Sprintf("workspace slug %q already exists for another GitHub repository", slug)))
 			return
 		}
@@ -126,7 +126,7 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 		httputil.WriteAnyError(w, err)
 		return
 	}
-	syncRunID := pgutil.UUIDString(run.ID)
+	syncRunID := pgutil2.UUIDString(run.ID)
 
 	payload := queue.WorkspaceSyncPayload{
 		WorkspaceID:   workspaceID,
@@ -147,7 +147,7 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 		if failErr := h.markRunFailed(r.Context(), run.ID, "ENQUEUE_FAILED", err.Error()); failErr != nil {
 			log.Error().Err(failErr).Str("workspace_id", workspaceID).Str("run_id", syncRunID).Msg("mark import enqueue failed run failed")
 		}
-		if pgutil.IsDedupeError(err) {
+		if pgutil2.IsDedupeError(err) {
 			httputil.WriteOK(w, http.StatusAccepted, map[string]string{
 				"status":       "already_queued",
 				"workspace_id": workspaceID,
@@ -192,7 +192,7 @@ func (h *ServiceHandler) findExistingImport(ctx context.Context, owner, repo str
 }
 
 func (h *ServiceHandler) createImportPlaceholder(ctx context.Context, workspaceID, name, slug, repoURL, defaultBranch, managementRepoID string) (string, error) {
-	uid, err := pgutil.PgUUID(workspaceID)
+	uid, err := pgutil2.PgUUID(workspaceID)
 	if err != nil {
 		return "", err
 	}
@@ -226,7 +226,7 @@ func (h *ServiceHandler) createImportPlaceholderWithQueries(ctx context.Context,
 	if err != nil {
 		return "", fmt.Errorf("upsert import placeholder workspace: %w", err)
 	}
-	actualWorkspaceID := pgutil.UUIDString(ws.ID)
+	actualWorkspaceID := pgutil2.UUIDString(ws.ID)
 	if err := h.upsertGitHubSourceWithQueries(ctx, q, actualWorkspaceID, repoURL, defaultBranch); err != nil {
 		return "", err
 	}
@@ -234,7 +234,7 @@ func (h *ServiceHandler) createImportPlaceholderWithQueries(ctx context.Context,
 }
 
 func (h *ServiceHandler) upsertGitHubSourceWithQueries(ctx context.Context, q *database.Queries, workspaceID, repoURL, defaultBranch string) error {
-	uid, err := pgutil.PgUUID(workspaceID)
+	uid, err := pgutil2.PgUUID(workspaceID)
 	if err != nil {
 		return err
 	}
@@ -256,7 +256,7 @@ func (h *ServiceHandler) upsertGitHubSourceWithQueries(ctx context.Context, q *d
 }
 
 func (h *ServiceHandler) insertRunningRun(ctx context.Context, workspaceID, trigger, mode, branch string) (database.WorkspaceSyncRun, error) {
-	uid, err := pgutil.PgUUID(workspaceID)
+	uid, err := pgutil2.PgUUID(workspaceID)
 	if err != nil {
 		return database.WorkspaceSyncRun{}, err
 	}
@@ -290,7 +290,7 @@ func (h *ServiceHandler) markRunFailed(ctx context.Context, runID pgtype.UUID, c
 func writeExistingImport(w http.ResponseWriter, existing database.Workspace, repoURL, defaultBranch string) {
 	httputil.WriteOK(w, http.StatusOK, importWorkspaceResponse{
 		Status:        "exists",
-		WorkspaceID:   pgutil.UUIDString(existing.ID),
+		WorkspaceID:   pgutil2.UUIDString(existing.ID),
 		Name:          existing.Name,
 		Slug:          existing.Slug,
 		RepoURL:       repoURL,

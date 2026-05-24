@@ -25,19 +25,27 @@ func writeConfig(t *testing.T, content string) string {
 }
 
 func TestLoad_HappyPath(t *testing.T) {
-	// Env overrides take precedence; pin values so test is deterministic regardless of host env.
 	t.Setenv("GITHUB_TOKEN", "ghp_test")
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "secret")
 
 	path := writeConfig(t, `
 log:
   level: debug
-server:
-  port: 9090
-database:
-  url: "postgres://localhost/test"
+api:
+  http:
+    address: ":9090"
+    mode: debug
+  auth:
+    admin_api_key: "key123"
+db:
+  host: localhost
+  port: 5432
+  db_name: testdb
+  user: postgres
+  password: postgres
 redis:
-  url: "redis://localhost:6379"
+  init_address:
+    - localhost:6379
 github:
   token: "ghp_yaml"
   webhook_secret: "yaml_secret"
@@ -51,13 +59,15 @@ sync:
 	if cfg.Log.Level != "debug" {
 		t.Errorf("log.level: got %q, want %q", cfg.Log.Level, "debug")
 	}
-	if cfg.Server.Port != 9090 {
-		t.Errorf("server.port: got %d, want 9090", cfg.Server.Port)
+	if cfg.API.HTTP.Address != ":9090" {
+		t.Errorf("api.http.address: got %q, want %q", cfg.API.HTTP.Address, ":9090")
 	}
-	if cfg.Database.URL != "postgres://localhost/test" {
-		t.Errorf("database.url: got %q", cfg.Database.URL)
+	if cfg.DB.Host != "localhost" {
+		t.Errorf("db.host: got %q", cfg.DB.Host)
 	}
-	// Env override should win over YAML value.
+	if cfg.Redis.Addr() != "localhost:6379" {
+		t.Errorf("redis addr: got %q", cfg.Redis.Addr())
+	}
 	if cfg.GitHub.Token != "ghp_test" {
 		t.Errorf("github.token: got %q, want %q", cfg.GitHub.Token, "ghp_test")
 	}
@@ -69,16 +79,14 @@ sync:
 	}
 }
 
-func TestLoad_MissingDatabaseURL(t *testing.T) {
+func TestLoad_MissingDBHost(t *testing.T) {
 	path := writeConfig(t, `
 log:
   level: info
-server:
-  port: 8080
 `)
 	_, err := configs.Load(path)
 	if err == nil {
-		t.Fatal("expected error for missing database.url")
+		t.Fatal("expected error for missing db.host")
 	}
 }
 
@@ -91,8 +99,12 @@ func TestLoad_FileNotFound(t *testing.T) {
 
 func TestLoad_Defaults(t *testing.T) {
 	path := writeConfig(t, `
-database:
-  url: "postgres://localhost/test"
+db:
+  host: localhost
+  port: 5432
+  db_name: testdb
+  user: postgres
+  password: postgres
 `)
 	cfg, err := configs.Load(path)
 	if err != nil {
@@ -101,8 +113,8 @@ database:
 	if cfg.Log.Level != "info" {
 		t.Errorf("default log.level: got %q, want %q", cfg.Log.Level, "info")
 	}
-	if cfg.Server.Port != 8080 {
-		t.Errorf("default server.port: got %d, want 8080", cfg.Server.Port)
+	if cfg.API.HTTP.Address != ":8080" {
+		t.Errorf("default api.http.address: got %q, want %q", cfg.API.HTTP.Address, ":8080")
 	}
 	if cfg.StaleThreshold() != 30*time.Minute {
 		t.Errorf("default stale threshold: got %v, want 30m", cfg.StaleThreshold())
@@ -111,17 +123,45 @@ database:
 
 func TestLoad_EnvOverride(t *testing.T) {
 	path := writeConfig(t, `
-database:
-  url: "postgres://localhost/test"
-server:
-  port: 8080
+db:
+  host: localhost
+  port: 5432
+  db_name: testdb
+  user: postgres
+  password: postgres
 `)
-	t.Setenv("SERVER_PORT", "7777")
+	t.Setenv("API_HTTP_ADDRESS", ":7777")
 	cfg, err := configs.Load(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Server.Port != 7777 {
-		t.Errorf("env override server.port: got %d, want 7777", cfg.Server.Port)
+	if cfg.API.HTTP.Address != ":7777" {
+		t.Errorf("env override api.http.address: got %q, want %q", cfg.API.HTTP.Address, ":7777")
+	}
+}
+
+func TestDBConfig_DSN(t *testing.T) {
+	cfg := configs.DBConfig{
+		Host:     "localhost",
+		Port:     5432,
+		DBName:   "mydb",
+		User:     "admin",
+		Password: "pass",
+	}
+	want := "postgres://admin:pass@localhost:5432/mydb?sslmode=disable"
+	if got := cfg.DSN(); got != want {
+		t.Errorf("DSN: got %q, want %q", got, want)
+	}
+}
+
+func TestRedisConfig_Addr(t *testing.T) {
+	cfg := configs.RedisConfig{InitAddress: []string{"redis-host:6380"}}
+	if got := cfg.Addr(); got != "redis-host:6380" {
+		t.Errorf("Addr: got %q, want %q", got, "redis-host:6380")
+	}
+
+	empty := configs.RedisConfig{}
+	if got := empty.Addr(); got != "127.0.0.1:6379" {
+		t.Errorf("empty Addr: got %q, want default", got)
 	}
 }

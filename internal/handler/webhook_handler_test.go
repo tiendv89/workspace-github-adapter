@@ -17,11 +17,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	pgutil2 "github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
-	"github.com/tiendv89/workspace-github-adapter/internal/pgutil"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 	"github.com/tiendv89/workspace-github-adapter/internal/webhook"
 )
 
@@ -356,20 +356,20 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 // TestIsDedupeError verifies dedupe error detection.
 func TestIsDedupeError_Match(t *testing.T) {
 	err := &fakeError{"task already exists"}
-	if !pgutil.IsDedupeError(err) {
+	if !pgutil2.IsDedupeError(err) {
 		t.Error("expected dedup error to match")
 	}
 }
 
 func TestIsDedupeError_NoMatch(t *testing.T) {
 	err := &fakeError{"some other error"}
-	if pgutil.IsDedupeError(err) {
+	if pgutil2.IsDedupeError(err) {
 		t.Error("expected non-dedup error to not match")
 	}
 }
 
 func TestIsDedupeError_Nil(t *testing.T) {
-	if pgutil.IsDedupeError(nil) {
+	if pgutil2.IsDedupeError(nil) {
 		t.Error("expected nil error to not match")
 	}
 }
@@ -677,7 +677,7 @@ func testWorkspaceFromID(workspaceID pgtype.UUID, branchPattern string) database
 
 func mustPGUUID(t *testing.T, raw string) pgtype.UUID {
 	t.Helper()
-	uid, err := pgutil.PgUUID(raw)
+	uid, err := pgutil2.PgUUID(raw)
 	if err != nil {
 		t.Fatalf("parse uuid %s: %v", raw, err)
 	}

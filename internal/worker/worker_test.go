@@ -3,7 +3,7 @@ package worker
 import (
 	"testing"
 
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 )
 
 func TestDeriveBranch(t *testing.T) {

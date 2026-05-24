@@ -7,12 +7,12 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/rs/zerolog/log"
+	"github.com/tiendv89/workspace-github-adapter/pkg/httputil"
+	pgutil2 "github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
+	"github.com/tiendv89/workspace-github-adapter/pkg/urlutil"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
-	"github.com/tiendv89/workspace-github-adapter/internal/httputil"
-	"github.com/tiendv89/workspace-github-adapter/internal/pgutil"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
-	"github.com/tiendv89/workspace-github-adapter/internal/urlutil"
 	"github.com/tiendv89/workspace-github-adapter/internal/webhook"
 )
 
@@ -168,7 +168,7 @@ func (h *ServiceHandler) findWorkspaceByRepoURL(ctx context.Context, repoURL str
 		branchPattern = *ws.BranchPattern
 	}
 	return &workspaceWebhookInfo{
-		workspaceID:   pgutil.UUIDString(src.WorkspaceID),
+		workspaceID:   pgutil2.UUIDString(src.WorkspaceID),
 		repoURL:       src.RepoURL,
 		defaultBranch: defaultBranch,
 		branchPattern: branchPattern,
@@ -204,7 +204,7 @@ func (h *ServiceHandler) enqueueWorkspaceSync(payload queue.WorkspaceSyncPayload
 		return fmt.Errorf("build workspace sync task: %w", err)
 	}
 	if _, err := h.Queue.Enqueue(task, asynq.TaskID(WorkspaceSyncTaskID(payload))); err != nil {
-		if pgutil.IsDedupeError(err) {
+		if pgutil2.IsDedupeError(err) {
 			return nil
 		}
 		return fmt.Errorf("enqueue workspace sync: %w", err)
@@ -226,7 +226,7 @@ func (h *ServiceHandler) enqueueTaskSync(workspaceID, featureID, taskID string) 
 	info, err := h.Queue.Enqueue(task)
 	if err != nil {
 		// ErrTaskIDConflict means duplicate — already queued, this is expected with Unique(24h).
-		if pgutil.IsDedupeError(err) {
+		if pgutil2.IsDedupeError(err) {
 			log.Info().Str("workspace_id", workspaceID).Str("feature_id", featureID).Str("task_id", taskID).Msg("task:sync already queued (dedup)")
 			return nil
 		}

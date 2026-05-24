@@ -7,11 +7,11 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
+	"github.com/tiendv89/workspace-github-adapter/pkg/httputil"
+	pgutil2 "github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
-	"github.com/tiendv89/workspace-github-adapter/internal/httputil"
-	"github.com/tiendv89/workspace-github-adapter/internal/pgutil"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 )
 
 // InternalWorkspaceHandler handles POST /internal/workspaces/{id}/sync.
@@ -28,7 +28,7 @@ func (h *ServiceHandler) InternalWorkspaceHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	uid, err := pgutil.PgUUID(workspaceID)
+	uid, err := pgutil2.PgUUID(workspaceID)
 	if err != nil {
 		httputil.WriteAnyError(w, err)
 		return
@@ -61,7 +61,7 @@ func (h *ServiceHandler) InternalWorkspaceHandler(w http.ResponseWriter, r *http
 	}
 	info, err := h.Queue.Enqueue(task, asynq.TaskID(WorkspaceSyncTaskID(payload)))
 	if err != nil {
-		if pgutil.IsDedupeError(err) {
+		if pgutil2.IsDedupeError(err) {
 			httputil.WriteOK(w, http.StatusAccepted, map[string]string{
 				"status": "already_queued",
 				"type":   queue.TypeWorkspaceSync,

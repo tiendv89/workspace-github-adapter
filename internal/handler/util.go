@@ -3,8 +3,8 @@ package handler
 import (
 	"strings"
 
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
-	"github.com/tiendv89/workspace-github-adapter/internal/urlutil"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
+	"github.com/tiendv89/workspace-github-adapter/pkg/urlutil"
 )
 
 // WorkspaceIDFromSyncPath extracts the workspace ID from paths like /internal/workspaces/{id}/sync.
