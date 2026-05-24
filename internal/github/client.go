@@ -61,7 +61,7 @@ func (c *client) do(ctx context.Context, url string) ([]byte, error) {
 		}
 		return nil, domain.NewGitHubNetworkError(err.Error())
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -136,14 +136,6 @@ type contentResponse struct {
 	Encoding string `json:"encoding"`
 	Content  string `json:"content"`
 	SHA      string `json:"sha"`
-}
-
-// commitResponse is used to extract commit SHA from a branch/ref query.
-type commitResponse struct {
-	Commit struct {
-		SHA string `json:"sha"`
-	} `json:"commit"`
-	SHA string `json:"sha"` // for tag and commit refs
 }
 
 // getTree fetches the full recursive file tree for a repo using the given commit SHA.

@@ -74,7 +74,7 @@ func main() {
 		log.Fatalf("redis: %v", err)
 	}
 	client := asynq.NewClient(redisOpt)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -101,7 +101,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, `{"status":"ok"}`)
+		_, _ = fmt.Fprintln(w, `{"status":"ok"}`)
 	})
 	mux.HandleFunc("/internal/workspaces/import", h.importWorkspaceHandler)
 	mux.HandleFunc("/internal/workspaces/", h.internalWorkspaceHandler)
@@ -143,7 +143,7 @@ func (h *serviceHandler) importWorkspaceHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	var req importWorkspaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeSourceError(w, domain.NewValidationError(domain.ErrValidationMissingInput, "invalid JSON body: "+err.Error()))
@@ -632,10 +632,6 @@ func (h *serviceHandler) createImportPlaceholderWithQueries(ctx context.Context,
 		return "", err
 	}
 	return actualWorkspaceID, nil
-}
-
-func (h *serviceHandler) upsertGitHubSource(ctx context.Context, workspaceID, repoURL, defaultBranch string) error {
-	return h.upsertGitHubSourceWithQueries(ctx, h.q, workspaceID, repoURL, defaultBranch)
 }
 
 func (h *serviceHandler) upsertGitHubSourceWithQueries(ctx context.Context, q *database.Queries, workspaceID, repoURL, defaultBranch string) error {
