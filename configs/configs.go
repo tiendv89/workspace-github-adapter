@@ -26,16 +26,11 @@ type LogConfig struct {
 
 type APIConfig struct {
 	HTTP HTTPConfig `mapstructure:"http"`
-	Auth AuthConfig `mapstructure:"auth"`
 }
 
 type HTTPConfig struct {
 	Address string `mapstructure:"address"`
 	Mode    string `mapstructure:"mode"`
-}
-
-type AuthConfig struct {
-	AdminAPIKey string `mapstructure:"admin_api_key"`
 }
 
 type DBConfig struct {
