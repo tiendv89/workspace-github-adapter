@@ -49,7 +49,7 @@ func TestWebhookHandler_InvalidSignature(t *testing.T) {
 	h := &ServiceHandler{WebhookSecret: "mysecret"}
 
 	body := []byte(`{"ref":"refs/heads/main","repository":{"clone_url":"https://github.com/o/r"},"commits":[]}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-Hub-Signature-256", "sha256=badsignature")
 	rec := httptest.NewRecorder()
@@ -63,7 +63,7 @@ func TestWebhookHandler_InvalidSignature(t *testing.T) {
 // TestWebhookHandler_MethodNotAllowed verifies that non-POST requests are rejected.
 func TestWebhookHandler_MethodNotAllowed(t *testing.T) {
 	h := &ServiceHandler{}
-	req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/webhook", nil)
 	rec := httptest.NewRecorder()
 	testRouter(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -76,7 +76,7 @@ func TestWebhookHandler_NonPushEvent(t *testing.T) {
 	secret := "mysecret"
 	h := &ServiceHandler{WebhookSecret: secret}
 	body := []byte(`{}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "pull_request")
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
@@ -167,7 +167,7 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
 		"commits":[{"added":["docs/features/alpha/status.yaml"],"modified":["docs/features/beta/tasks.md"],"removed":["README.md"]}]
 	}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
@@ -200,7 +200,7 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
 		"commits":[{"modified":["docs/features/workspace-data-backend/tasks/T7.yaml"]}]
 	}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
@@ -229,7 +229,7 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
 		"commits":[{"modified":["docs/features/workspace-data-backend/tasks/T7.yaml"]}]
 	}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
@@ -265,7 +265,7 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
 		"commits":[{"modified":["docs/features/workspace-data-backend/tasks.md"]}]
 	}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
@@ -298,7 +298,7 @@ func TestImportWorkspaceHandler_GitHubNotFoundDoesNotPersistPlaceholder(t *testi
 		Queue:  enqueuer,
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
 		"repo_url":"https://github.com/acme/missing",
 		"default_branch":"main"
 	}`))
@@ -338,7 +338,7 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 		Queue:  enqueuer,
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
 		"repo_url":"https://github.com/Kadamato/test_workspace.git",
 		"default_branch":"main",
 		"name":"Project Workspace"
