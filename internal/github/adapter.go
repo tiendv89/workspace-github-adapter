@@ -100,7 +100,7 @@ func (a *Adapter) FetchWorkspaceMetadata(ctx context.Context, input domain.Impor
 			Path:      workspaceYAMLPath,
 		}
 	}
-	wsCfg, parseErr := parseWorkspaceYAML(wsData, workspaceYAMLPath)
+	wsCfg, parseErr := parseWorkspaceYAML(wsData)
 	if parseErr != nil {
 		return nil, *parseErr
 	}
@@ -254,7 +254,7 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 			Path:      wsYAMLPath,
 		}
 	}
-	wsCfg, parseErr := parseWorkspaceYAML(wsData, wsYAMLPath)
+	wsCfg, parseErr := parseWorkspaceYAML(wsData)
 	if parseErr != nil {
 		return nil, *parseErr
 	}

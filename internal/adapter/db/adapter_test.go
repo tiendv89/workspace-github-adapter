@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -360,12 +361,40 @@ func (r workspaceUpdateRow) Scan(dest ...any) error {
 	if len(dest) != 7 {
 		return errors.New("unexpected workspace scan destination count")
 	}
-	*(dest[0].(*pgtype.UUID)) = r.workspaceID
-	*(dest[1].(*string)) = "workspace"
-	*(dest[2].(*string)) = "Workspace"
-	*(dest[3].(*string)) = "management-repo"
-	*(dest[4].(**string)) = r.branchPattern
-	*(dest[5].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
-	*(dest[6].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
+	d0, ok := dest[0].(*pgtype.UUID)
+	if !ok {
+		return fmt.Errorf("dest[0]: expected *pgtype.UUID, got %T", dest[0])
+	}
+	*d0 = r.workspaceID
+	d1, ok := dest[1].(*string)
+	if !ok {
+		return fmt.Errorf("dest[1]: expected *string, got %T", dest[1])
+	}
+	*d1 = "workspace"
+	d2, ok := dest[2].(*string)
+	if !ok {
+		return fmt.Errorf("dest[2]: expected *string, got %T", dest[2])
+	}
+	*d2 = "Workspace"
+	d3, ok := dest[3].(*string)
+	if !ok {
+		return fmt.Errorf("dest[3]: expected *string, got %T", dest[3])
+	}
+	*d3 = "management-repo"
+	d4, ok := dest[4].(**string)
+	if !ok {
+		return fmt.Errorf("dest[4]: expected **string, got %T", dest[4])
+	}
+	*d4 = r.branchPattern
+	d5, ok := dest[5].(*pgtype.Timestamptz)
+	if !ok {
+		return fmt.Errorf("dest[5]: expected *pgtype.Timestamptz, got %T", dest[5])
+	}
+	*d5 = pgtype.Timestamptz{}
+	d6, ok := dest[6].(*pgtype.Timestamptz)
+	if !ok {
+		return fmt.Errorf("dest[6]: expected *pgtype.Timestamptz, got %T", dest[6])
+	}
+	*d6 = pgtype.Timestamptz{}
 	return nil
 }

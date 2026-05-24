@@ -97,10 +97,10 @@ var taskIDPattern = regexp.MustCompile(`^T\d+$`)
 
 // parseWorkspaceYAML parses the raw bytes of workspace.yaml.
 // Returns a SourceError if the content is invalid YAML.
-func parseWorkspaceYAML(data []byte, sourcePath string) (*workspaceYAML, *domain.SourceError) {
+func parseWorkspaceYAML(data []byte) (*workspaceYAML, *domain.SourceError) {
 	var ws workspaceYAML
 	if err := yaml.Unmarshal(data, &ws); err != nil {
-		se := domain.NewParserInvalidYAMLError(sourcePath, err.Error())
+		se := domain.NewParserInvalidYAMLError("workspace.yaml", err.Error())
 		return nil, &se
 	}
 	return &ws, nil

@@ -25,6 +25,8 @@ import (
 )
 
 // buildSig computes the HMAC-SHA256 signature for a payload.
+//
+//nolint:unparam
 func buildSig(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
@@ -586,13 +588,29 @@ func (r webhookSourceRow) Scan(dest ...any) error {
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
-			*d = values[i].(pgtype.UUID)
+			v, ok := values[i].(pgtype.UUID)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected pgtype.UUID, got %T", i, values[i])
+			}
+			*d = v
 		case *string:
-			*d = values[i].(string)
+			v, ok := values[i].(string)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected string, got %T", i, values[i])
+			}
+			*d = v
 		case **string:
-			*d = values[i].(*string)
+			v, ok := values[i].(*string)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected *string, got %T", i, values[i])
+			}
+			*d = v
 		case *pgtype.Timestamptz:
-			*d = values[i].(pgtype.Timestamptz)
+			v, ok := values[i].(pgtype.Timestamptz)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
+			}
+			*d = v
 		default:
 			return fmt.Errorf("unsupported scan destination %T", dest[i])
 		}
@@ -620,13 +638,29 @@ func (r webhookWorkspaceRow) Scan(dest ...any) error {
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
-			*d = values[i].(pgtype.UUID)
+			v, ok := values[i].(pgtype.UUID)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected pgtype.UUID, got %T", i, values[i])
+			}
+			*d = v
 		case *string:
-			*d = values[i].(string)
+			v, ok := values[i].(string)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected string, got %T", i, values[i])
+			}
+			*d = v
 		case **string:
-			*d = values[i].(*string)
+			v, ok := values[i].(*string)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected *string, got %T", i, values[i])
+			}
+			*d = v
 		case *pgtype.Timestamptz:
-			*d = values[i].(pgtype.Timestamptz)
+			v, ok := values[i].(pgtype.Timestamptz)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
+			}
+			*d = v
 		default:
 			return fmt.Errorf("unsupported scan destination %T", dest[i])
 		}

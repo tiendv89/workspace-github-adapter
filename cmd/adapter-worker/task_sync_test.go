@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -652,15 +653,35 @@ func scanValues(dest []any, values []any) error {
 	for i, d := range dest {
 		switch out := d.(type) {
 		case *pgtype.UUID:
-			*out = values[i].(pgtype.UUID)
+			v, ok := values[i].(pgtype.UUID)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected pgtype.UUID, got %T", i, values[i])
+			}
+			*out = v
 		case *string:
-			*out = values[i].(string)
+			v, ok := values[i].(string)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected string, got %T", i, values[i])
+			}
+			*out = v
 		case **string:
-			*out = values[i].(*string)
+			v, ok := values[i].(*string)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected *string, got %T", i, values[i])
+			}
+			*out = v
 		case *json.RawMessage:
-			*out = values[i].(json.RawMessage)
+			v, ok := values[i].(json.RawMessage)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected json.RawMessage, got %T", i, values[i])
+			}
+			*out = v
 		case *pgtype.Timestamptz:
-			*out = values[i].(pgtype.Timestamptz)
+			v, ok := values[i].(pgtype.Timestamptz)
+			if !ok {
+				return fmt.Errorf("scan[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
+			}
+			*out = v
 		default:
 			return errors.New("unsupported scan destination")
 		}

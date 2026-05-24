@@ -74,19 +74,24 @@ func main() {
 		log.Fatalf("redis: %v", err)
 	}
 	client := asynq.NewClient(redisOpt)
-	defer func() { _ = client.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
+		cancel()
+		_ = client.Close()
 		log.Fatalf("pgxpool.New: %v", err)
 	}
-	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
+		cancel()
+		pool.Close()
+		_ = client.Close()
 		log.Fatalf("ping db: %v", err)
 	}
+	cancel()
+	defer pool.Close()
+	defer func() { _ = client.Close() }()
 
 	h := &serviceHandler{
 		db:            dbadapter.New(pool),

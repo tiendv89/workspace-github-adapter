@@ -25,27 +25,36 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		return fmt.Errorf("config: %w", err)
 	}
 
 	redisOpt, err := queue.RedisOpt(cfg.RedisURL)
 	if err != nil {
-		log.Fatalf("redis: %v", err)
+		return fmt.Errorf("redis: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("pgxpool.New: %v", err)
+		cancel()
+		return fmt.Errorf("pgxpool.New: %w", err)
 	}
-	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("ping db: %v", err)
+		cancel()
+		pool.Close()
+		return fmt.Errorf("ping db: %w", err)
 	}
+	cancel()
+	defer pool.Close()
 
 	h := &handler{
 		db:       dbadapter.New(pool),
@@ -69,8 +78,9 @@ func main() {
 
 	log.Println("adapter-worker listening for Redis queue tasks")
 	if err := srv.Run(mux); err != nil {
-		log.Fatalf("worker stopped: %v", err)
+		return fmt.Errorf("worker stopped: %w", err)
 	}
+	return nil
 }
 
 type handler struct {

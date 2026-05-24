@@ -198,7 +198,7 @@ func TestClientDoCancelled(t *testing.T) {
 
 func TestParseWorkspaceYAML(t *testing.T) {
 	data := fixture(t, "workspace.yaml")
-	ws, se := parseWorkspaceYAML(data, "workspace.yaml")
+	ws, se := parseWorkspaceYAML(data)
 	if se != nil {
 		t.Fatalf("unexpected error: %v", se)
 	}
@@ -212,7 +212,7 @@ func TestParseWorkspaceYAML(t *testing.T) {
 
 func TestParseWorkspaceYAMLInvalid(t *testing.T) {
 	data := fixture(t, "invalid.yaml")
-	_, se := parseWorkspaceYAML(data, "workspace.yaml")
+	_, se := parseWorkspaceYAML(data)
 	if se == nil {
 		t.Fatal("expected parse error, got nil")
 	}
