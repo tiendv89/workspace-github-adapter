@@ -29,16 +29,6 @@ services:
       timeout: 5s
       retries: 10
 
-  migrate:
-    build: .
-    command: ["/migrate"]
-    environment:
-      DATABASE_URL: postgres://workspace_adapter:workspace_adapter@postgres:5432/workspace_adapter?sslmode=disable
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
   adapter-service:
     build: .
     environment:
@@ -50,8 +40,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -63,8 +53,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
 

@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tiendv89/workspace-github-adapter/database"
 	adapterdb "github.com/tiendv89/workspace-github-adapter/internal/adapter/db"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 )
@@ -33,10 +32,8 @@ func TestIntegration_MigrateAndRoundtrip(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := dbURL(t)
 
-	// Run migrations.
-	if err := database.RunMigrations(ctx, databaseURL); err != nil {
-		t.Fatalf("RunMigrations: %v", err)
-	}
+	// Migrations are owned by workflow-backend and must be applied before running
+	// these integration tests (e.g. by starting workflow-backend api-service first).
 
 	// Connect adapter.
 	adapter, err := adapterdb.Connect(ctx, databaseURL)
