@@ -40,7 +40,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-workflow-backend-buildx
+          key: ${{ runner.os }}-workflow-github-adapter-buildx
 
       - name: Docker build
         uses: docker/build-push-action@v5
