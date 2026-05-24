@@ -360,12 +360,12 @@ func (r workspaceUpdateRow) Scan(dest ...any) error {
 	if len(dest) != 7 {
 		return errors.New("unexpected workspace scan destination count")
 	}
-	*(dest[0].(*pgtype.UUID)) = r.workspaceID
-	*(dest[1].(*string)) = "workspace"
-	*(dest[2].(*string)) = "Workspace"
-	*(dest[3].(*string)) = "management-repo"
-	*(dest[4].(**string)) = r.branchPattern
-	*(dest[5].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
-	*(dest[6].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
+	*(dest[0].(*pgtype.UUID)) = r.workspaceID               //nolint:errcheck
+	*(dest[1].(*string)) = "workspace"                      //nolint:errcheck
+	*(dest[2].(*string)) = "Workspace"                      //nolint:errcheck
+	*(dest[3].(*string)) = "management-repo"                //nolint:errcheck
+	*(dest[4].(**string)) = r.branchPattern                 //nolint:errcheck
+	*(dest[5].(*pgtype.Timestamptz)) = pgtype.Timestamptz{} //nolint:errcheck
+	*(dest[6].(*pgtype.Timestamptz)) = pgtype.Timestamptz{} //nolint:errcheck
 	return nil
 }
