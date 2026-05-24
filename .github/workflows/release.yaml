@@ -11,7 +11,7 @@ on:
         required: true
 
 env:
-  IMAGE_REPOSITORY: asia.gcr.io/production-476602/workflow-github-adapter
+  IMAGE_REPOSITORY: asia.gcr.io/production-476602/workspace-github-adapter
 
 jobs:
   prepare:
@@ -85,7 +85,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-workflow-github-adapter-buildx
+          key: ${{ runner.os }}-workspace-github-adapter-buildx
 
       - name: Docker build and push
         uses: docker/build-push-action@v5
@@ -128,7 +128,7 @@ jobs:
       - name: Create tag
         run: |
           git tag -d "$VERSION_TAG" 2> /dev/null || echo "Release tag '$VERSION_TAG' does NOT exist"
-          git tag --annotate --message "workflow-github-adapter $VERSION_TAG" "$VERSION_TAG"
+          git tag --annotate --message "workspace-github-adapter $VERSION_TAG" "$VERSION_TAG"
           git push origin "refs/tags/$VERSION_TAG"
 
       - name: Create release
@@ -137,4 +137,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ env.VERSION_TAG }}
           prerelease: false
-          name: "workflow-github-adapter ${{ env.VERSION_TAG }}"
+          name: "workspace-github-adapter ${{ env.VERSION_TAG }}"
