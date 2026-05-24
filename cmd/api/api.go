@@ -33,8 +33,8 @@ var Command = &cobra.Command{
 func runServe(_ *cobra.Command, _ []string) error {
 	cfg := configs.G
 
-	if cfg.GitHub.WebhookSecret == "" {
-		log.Fatal().Msg("GITHUB_WEBHOOK_SECRET is required for api webhooks")
+	if cfg.GitHub.WebhookSecrets == "" {
+		log.Fatal().Msg("GITHUB_WEBHOOK_SECRETS is required for api webhooks")
 	}
 
 	redisOpt := queue.RedisOpt(cfg.Redis.Addr())
@@ -54,13 +54,13 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 
 	h := &handler.ServiceHandler{
-		DB:            dbadapter.New(pool),
-		Q:             database.New(pool),
-		Pool:          pool,
-		GitHub:        ghadapter.New(cfg.GitHub.Token),
-		Token:         cfg.GitHub.Token,
-		Queue:         client,
-		WebhookSecret: cfg.GitHub.WebhookSecret,
+		DB:             dbadapter.New(pool),
+		Q:              database.New(pool),
+		Pool:           pool,
+		GitHub:         ghadapter.New(cfg.GitHub.Token),
+		Token:          cfg.GitHub.Token,
+		Queue:          client,
+		WebhookSecrets: cfg.GitHub.WebhookSecrets,
 	}
 
 	if cfg.API.HTTP.Mode == "release" {

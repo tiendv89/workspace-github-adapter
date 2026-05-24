@@ -29,7 +29,7 @@ redis:
 
 github:
   token: ""
-  webhook_secret: "a"
+  webhook_secrets: "a"
 
 sync:
   stale_threshold_minutes: 30
