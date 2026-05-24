@@ -156,7 +156,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 	if err != nil {
 		return nil, err
 	}
-	f, featureUUID, err := a.resolveFeature(ctx, uid, featureID)
+	_, featureUUID, err := a.resolveFeature(ctx, uid, featureID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.NewDatabaseError(domain.ErrDatabaseNotFound, "feature not found: "+featureID)
@@ -164,7 +164,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 		return nil, err
 	}
 
-	f, err = a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{
+	f, err := a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{
 		WorkspaceID: uid,
 		FeatureID:   featureUUID,
 	})
