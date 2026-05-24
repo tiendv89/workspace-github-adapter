@@ -1,0 +1,18 @@
+log:
+  level: info
+
+server:
+  port: 8080
+
+database:
+  url: "postgres://user:password@localhost:5432/workspace?sslmode=disable"
+
+redis:
+  url: "redis://localhost:6379"
+
+github:
+  token: ""
+  webhook_secret: ""
+
+sync:
+  stale_threshold_minutes: 30
