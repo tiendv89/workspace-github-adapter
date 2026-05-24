@@ -1,49 +1,83 @@
 # workspace-github-adapter
 
-## Run Redis + worker locally with Docker Compose
+Bridges GitHub management repositories and a PostgreSQL workspace database. Two binaries:
 
-Start PostgreSQL, Redis, migrations, HTTP adapter service, and Redis worker:
+- **adapter-service** — HTTP server that validates incoming requests, runs metadata preflight checks against GitHub, and enqueues async jobs.
+- **adapter-worker** — Redis/asynq worker that executes workspace syncs and task syncs.
+
+## Quick start with Docker Compose
+
+Starts PostgreSQL, Redis, `adapter-service`, and `adapter-worker`:
+
+```bash
+cp .env.example .env
+# edit .env — set GITHUB_WEBHOOK_SECRET and optionally GITHUB_TOKEN
+docker compose up --build
+```
+
+Or pass env vars inline:
 
 ```bash
 GITHUB_WEBHOOK_SECRET='shared-webhook-secret' docker compose up --build
 ```
 
-Optional GitHub token for private repositories or higher API limits:
+## Environment variables
 
-```bash
-GITHUB_WEBHOOK_SECRET='shared-webhook-secret' \
-GITHUB_TOKEN=your_token \
-docker compose up --build
-```
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | yes | — | PostgreSQL connection string |
+| `GITHUB_WEBHOOK_SECRET` | yes (service) | — | HMAC secret for `POST /webhook` signature verification |
+| `GITHUB_TOKEN` | no | — | GitHub token for private repos or higher API rate limits |
+| `REDIS_URL` | no | `redis://127.0.0.1:6379/0` | Redis connection URL |
+| `PORT` | no | `8080` | HTTP listen port for adapter-service |
+| `STALE_THRESHOLD_MINUTES` | no | `30` | Minutes after which a successful sync is considered stale |
 
-Import a workspace from a GitHub management repository:
+## API
+
+### Import a workspace
+
+Reads `workspace.yaml` from the repo for preflight validation, then enqueues a full sync.
 
 ```bash
 curl -X POST http://localhost:8080/internal/workspaces/import \
   -H 'Content-Type: application/json' \
   -d '{
     "repo_url": "https://github.com/owner/repo",
-    "default_branch": "main"
+    "default_branch": "main",
+    "name": "My Workspace"
   }'
 ```
 
-The import response returns only basic workspace information: `id`, `name`, `slug`, `repo_url`, and `default_branch`.
+Response includes: `id`, `name`, `slug`, `repo_url`, `default_branch`.
 
-Trigger a full sync for an existing imported workspace:
+### Trigger a full sync
 
 ```bash
-curl -X POST http://localhost:8080/internal/workspaces/00000000-0000-0000-0000-000000000001/sync
+curl -X POST http://localhost:8080/internal/workspaces/{workspace_id}/sync
 ```
 
-## Run services manually
+### Health check
 
-Redis:
+```bash
+curl http://localhost:8080/healthz
+```
+
+### GitHub webhook
+
+Receives GitHub push events and routes them to targeted or full syncs based on branch pattern:
+
+```
+POST /webhook
+X-Hub-Signature-256: sha256=<hmac>
+```
+
+Configure in GitHub: repo → Settings → Webhooks → select **push** events, set the secret to match `GITHUB_WEBHOOK_SECRET`.
+
+## Run services manually
 
 ```bash
 docker run --rm -p 6379:6379 redis:7-alpine
 ```
-
-Worker:
 
 ```bash
 DATABASE_URL='postgres://user:pass@localhost:5432/db?sslmode=disable' \
@@ -51,8 +85,6 @@ REDIS_URL='redis://localhost:6379/0' \
 GITHUB_TOKEN='optional_token' \
 go run ./cmd/adapter-worker
 ```
-
-HTTP service/enqueuer:
 
 ```bash
 DATABASE_URL='postgres://user:pass@localhost:5432/db?sslmode=disable' \
@@ -62,5 +94,16 @@ GITHUB_WEBHOOK_SECRET='shared-webhook-secret' \
 go run ./cmd/adapter-service
 ```
 
-GitHub webhooks should send push events to `POST /webhook` with
-`X-Hub-Signature-256` generated from the same `GITHUB_WEBHOOK_SECRET`.
+## Development
+
+Regenerate database queries after editing `database/queries/*.sql`:
+
+```bash
+sqlc generate
+```
+
+Lint:
+
+```bash
+golangci-lint run
+```
