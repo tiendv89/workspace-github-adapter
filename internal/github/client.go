@@ -203,7 +203,8 @@ func (c *client) getFileContent(ctx context.Context, owner, repo, path, ref stri
 	}
 
 	var cr contentResponse
-	if err := json.Unmarshal(body, &cr); err != nil {
+	err = json.Unmarshal(body, &cr)
+	if err != nil {
 		return nil, domain.SourceError{
 			Code:      domain.ErrAdapterInternal,
 			Message:   fmt.Sprintf("failed to parse contents response for %s: %v", path, err),

@@ -406,13 +406,24 @@ func (r workspaceUpdateRow) Scan(dest ...any) error {
 	if len(dest) != 8 {
 		return fmt.Errorf("unexpected workspace scan destination count: got %d, want 8", len(dest))
 	}
-	*(dest[0].(*pgtype.UUID)) = r.workspaceID
-	*(dest[1].(*string)) = "workspace"
-	*(dest[2].(*string)) = "Workspace"
-	*(dest[3].(*string)) = "management-repo"
-	*(dest[4].(**string)) = r.branchPattern
-	*(dest[5].(**string)) = r.slackChannelID
-	*(dest[6].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
-	*(dest[7].(*pgtype.Timestamptz)) = pgtype.Timestamptz{}
+	d0, ok0 := dest[0].(*pgtype.UUID)
+	d1, ok1 := dest[1].(*string)
+	d2, ok2 := dest[2].(*string)
+	d3, ok3 := dest[3].(*string)
+	d4, ok4 := dest[4].(**string)
+	d5, ok5 := dest[5].(**string)
+	d6, ok6 := dest[6].(*pgtype.Timestamptz)
+	d7, ok7 := dest[7].(*pgtype.Timestamptz)
+	if !ok0 || !ok1 || !ok2 || !ok3 || !ok4 || !ok5 || !ok6 || !ok7 {
+		return fmt.Errorf("workspaceUpdateRow.Scan: unexpected destination types")
+	}
+	*d0 = r.workspaceID
+	*d1 = "workspace"
+	*d2 = "Workspace"
+	*d3 = "management-repo"
+	*d4 = r.branchPattern
+	*d5 = r.slackChannelID
+	*d6 = pgtype.Timestamptz{}
+	*d7 = pgtype.Timestamptz{}
 	return nil
 }

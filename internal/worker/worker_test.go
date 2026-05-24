@@ -1,9 +1,9 @@
-package main
+package worker
 
 import (
 	"testing"
 
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 )
 
 func TestDeriveBranch(t *testing.T) {
@@ -18,9 +18,9 @@ func TestDeriveBranch(t *testing.T) {
 		{"feature/{feature_id}-{work_id}", "my-feature", "T12", "feature/my-feature-T12"},
 	}
 	for _, tc := range cases {
-		got := deriveBranch(tc.pattern, tc.featureID, tc.taskID)
+		got := DeriveBranch(tc.pattern, tc.featureID, tc.taskID)
 		if got != tc.want {
-			t.Errorf("deriveBranch(%q, %q, %q) = %q, want %q", tc.pattern, tc.featureID, tc.taskID, got, tc.want)
+			t.Errorf("DeriveBranch(%q, %q, %q) = %q, want %q", tc.pattern, tc.featureID, tc.taskID, got, tc.want)
 		}
 	}
 }
@@ -31,8 +31,8 @@ func TestTaskSyncBranch_DerivesFromPattern(t *testing.T) {
 		TaskID:    "T1",
 	}
 
-	got := taskSyncBranch(payload, "task/{feature_id}/{work_id}")
+	got := TaskSyncBranch(payload, "task/{feature_id}/{work_id}")
 	if got != "task/test-webhook-19-05/T1" {
-		t.Errorf("taskSyncBranch() = %q, want derived branch", got)
+		t.Errorf("TaskSyncBranch() = %q, want derived branch", got)
 	}
 }

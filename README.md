@@ -1,36 +1,82 @@
 # workspace-github-adapter
 
-Bridges GitHub management repositories and a PostgreSQL workspace database. Two binaries:
+Bridges GitHub management repositories and a PostgreSQL workspace database. Single binary with two subcommands:
 
-- **adapter-service** — HTTP server that validates incoming requests, runs metadata preflight checks against GitHub, and enqueues async jobs.
-- **adapter-worker** — Redis/asynq worker that executes workspace syncs and task syncs.
+- **api** — Gin HTTP server that validates incoming requests, runs metadata preflight checks against GitHub, and enqueues async jobs.
+- **worker** — Redis/asynq worker that executes workspace syncs and task syncs.
 
 ## Quick start with Docker Compose
 
-Starts PostgreSQL, Redis, `adapter-service`, and `adapter-worker`:
+Starts PostgreSQL, Redis, `api`, and `worker`:
 
 ```bash
 cp .env.example .env
-# edit .env — set GITHUB_WEBHOOK_SECRET and optionally GITHUB_TOKEN
+# edit .env — set github.webhook_secret and optionally github.token
 docker compose up --build
 ```
 
-Or pass env vars inline:
+## Configuration
+
+Configuration is file-based. Pass the config file path via `--config` (required):
 
 ```bash
-GITHUB_WEBHOOK_SECRET='shared-webhook-secret' docker compose up --build
+go run ./cmd --config configs/config.yaml api
+go run ./cmd --config configs/config.yaml worker
 ```
 
-## Environment variables
+All config values can be overridden with environment variables using the uppercased dot-path with underscores (e.g. `db.host` → `DB_HOST`).
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DATABASE_URL` | yes | — | PostgreSQL connection string |
-| `GITHUB_WEBHOOK_SECRET` | yes (service) | — | HMAC secret for `POST /webhook` signature verification |
-| `GITHUB_TOKEN` | no | — | GitHub token for private repos or higher API rate limits |
-| `REDIS_URL` | no | `redis://127.0.0.1:6379/0` | Redis connection URL |
-| `PORT` | no | `8080` | HTTP listen port for adapter-service |
-| `STALE_THRESHOLD_MINUTES` | no | `30` | Minutes after which a successful sync is considered stale |
+### Config file reference
+
+```yaml
+log:
+  level: info                    # debug | info | warn | error
+
+api:
+  http:
+    address: ":8080"
+    mode: release                # debug | release
+
+db:
+  host: 127.0.0.1
+  port: 5432
+  db_name: workspace
+  user: workspace
+  password: ""
+  conn_life_time_seconds: 300
+  max_idle_conns: 10
+  max_open_conns: 30
+
+redis:
+  init_address:
+    - localhost:6379
+  select_db:
+  username:
+  password:
+
+github:
+  token: ""                      # optional; for private repos or higher rate limits
+  webhook_secret: ""             # required for api; HMAC secret for POST /webhook
+
+sync:
+  stale_threshold_minutes: 30   # minutes after which a successful sync is considered stale
+```
+
+### Key environment variable overrides
+
+| Env var | Config path | Description |
+|---|---|---|
+| `DB_HOST` | `db.host` | PostgreSQL host |
+| `DB_PORT` | `db.port` | PostgreSQL port |
+| `DB_NAME` | `db.db_name` | PostgreSQL database name |
+| `DB_USER` | `db.user` | PostgreSQL user |
+| `DB_PASSWORD` | `db.password` | PostgreSQL password |
+| `REDIS_INIT_ADDRESS` | `redis.init_address` | Redis address(es) |
+| `GITHUB_TOKEN` | `github.token` | GitHub personal access token |
+| `GITHUB_WEBHOOK_SECRET` | `github.webhook_secret` | HMAC secret for webhook signature verification |
+| `API_HTTP_ADDRESS` | `api.http.address` | HTTP listen address |
+| `LOG_LEVEL` | `log.level` | Log level |
+| `SYNC_STALE_THRESHOLD_MINUTES` | `sync.stale_threshold_minutes` | Stale sync threshold |
 
 ## API
 
@@ -64,14 +110,25 @@ curl http://localhost:8080/healthz
 
 ### GitHub webhook
 
-Receives GitHub push events and routes them to targeted or full syncs based on branch pattern:
+Receives GitHub push events and routes them based on the branch pushed:
+
+- **Base branch push** — enqueues a targeted `workspace:sync` for each feature touched by the push.
+- **Feature branch push** — enqueues a targeted `workspace:sync` for that feature.
+- **Task branch push** — enqueues a `task:sync` (deduplicated with a 24-hour window).
 
 ```
 POST /webhook
 X-Hub-Signature-256: sha256=<hmac>
 ```
 
-Configure in GitHub: repo → Settings → Webhooks → select **push** events, set the secret to match `GITHUB_WEBHOOK_SECRET`.
+Configure in GitHub: repo → Settings → Webhooks → select **push** events, set the secret to match `github.webhook_secret`.
+
+## Worker job types
+
+| Queue | Job | Concurrency | Description |
+|---|---|---|---|
+| `default` | `workspace:sync` | 1 | Full or targeted workspace sync from GitHub |
+| `task-sync` | `task:sync` | 3 | Single task branch sync, 24h dedup, max 3 retries |
 
 ## Run services manually
 
@@ -80,18 +137,11 @@ docker run --rm -p 6379:6379 redis:7-alpine
 ```
 
 ```bash
-DATABASE_URL='postgres://user:pass@localhost:5432/db?sslmode=disable' \
-REDIS_URL='redis://localhost:6379/0' \
-GITHUB_TOKEN='optional_token' \
-go run ./cmd/adapter-worker
+go run ./cmd --config configs/config.yaml worker
 ```
 
 ```bash
-DATABASE_URL='postgres://user:pass@localhost:5432/db?sslmode=disable' \
-REDIS_URL='redis://localhost:6379/0' \
-GITHUB_TOKEN='optional_token' \
-GITHUB_WEBHOOK_SECRET='shared-webhook-secret' \
-go run ./cmd/adapter-service
+go run ./cmd --config configs/config.yaml api
 ```
 
 ## Development

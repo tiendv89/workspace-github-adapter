@@ -1,25 +1,24 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
-
-WORKDIR /src
-
-# Download dependencies before copying source so layers are cached on module changes.
+# Vendor stage
+FROM golang:1.25.8 AS dep
+WORKDIR /build
 COPY go.mod go.sum ./
-RUN go mod download
-
+RUN GO111MODULE=on go mod download
 COPY . .
+RUN go mod vendor
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-    -o /out/adapter-service ./cmd/adapter-service && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-    -o /out/adapter-worker ./cmd/adapter-worker
+# Build binary stage
+FROM golang:1.25.8 AS build
+WORKDIR /build
+COPY --from=dep /build .
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o server -tags nethttpomithttp2 ./cmd
 
-# Runtime stage — distroless for minimal attack surface.
-FROM gcr.io/distroless/static-debian12:nonroot
-
-COPY --from=builder /out/adapter-service /adapter-service
-COPY --from=builder /out/adapter-worker /adapter-worker
-
-EXPOSE 8080
-
-CMD ["/adapter-service"]
+# Minimal image
+FROM alpine:latest
+WORKDIR /app
+COPY configs/config.yaml configs/config.yaml
+COPY --from=build /build/server server
+RUN apk update
+RUN apk upgrade
+RUN apk add ca-certificates
+RUN apk --no-cache add tzdata
+CMD ["./server"]

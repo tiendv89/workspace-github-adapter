@@ -1,4 +1,4 @@
-package main
+package handler
 
 import (
 	"context"
@@ -13,35 +13,48 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	pgutil2 "github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
+
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
 	"github.com/tiendv89/workspace-github-adapter/internal/webhook"
 )
 
+func testRouter(h *ServiceHandler) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.HandleMethodNotAllowed = true
+	r.POST("/webhook", h.WebhookHandler)
+	r.POST("/internal/workspaces/import", h.ImportWorkspaceHandler)
+	r.POST("/internal/workspaces/:id/sync", h.SyncWorkspaceHandler)
+	return r
+}
+
 // buildSig computes the HMAC-SHA256 signature for a payload.
-func buildSig(secret string, body []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
+func buildSig(body []byte) string {
+	mac := hmac.New(sha256.New, []byte("mysecret"))
 	mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 // TestWebhookHandler_InvalidSignature verifies that requests with wrong HMAC are rejected.
 func TestWebhookHandler_InvalidSignature(t *testing.T) {
-	h := &serviceHandler{webhookSecret: "mysecret"}
+	h := &ServiceHandler{WebhookSecret: "mysecret"}
 
 	body := []byte(`{"ref":"refs/heads/main","repository":{"clone_url":"https://github.com/o/r"},"commits":[]}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-Hub-Signature-256", "sha256=badsignature")
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
 	}
@@ -49,10 +62,10 @@ func TestWebhookHandler_InvalidSignature(t *testing.T) {
 
 // TestWebhookHandler_MethodNotAllowed verifies that non-POST requests are rejected.
 func TestWebhookHandler_MethodNotAllowed(t *testing.T) {
-	h := &serviceHandler{}
-	req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
+	h := &ServiceHandler{}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/webhook", nil)
 	rec := httptest.NewRecorder()
-	h.webhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", rec.Code)
 	}
@@ -61,13 +74,13 @@ func TestWebhookHandler_MethodNotAllowed(t *testing.T) {
 // TestWebhookHandler_NonPushEvent verifies that non-push events are ignored with 200.
 func TestWebhookHandler_NonPushEvent(t *testing.T) {
 	secret := "mysecret"
-	h := &serviceHandler{webhookSecret: secret}
+	h := &ServiceHandler{WebhookSecret: secret}
 	body := []byte(`{}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "pull_request")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
-	h.webhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
@@ -143,10 +156,10 @@ func TestBasePushTargetedSyncPayloads_NoFeaturePaths(t *testing.T) {
 func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 	secret := "mysecret"
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
-		queue:         enqueuer,
-		webhookSecret: secret,
+	h := &ServiceHandler{
+		Q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
+		Queue:         enqueuer,
+		WebhookSecret: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/main",
@@ -154,12 +167,12 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
 		"commits":[{"added":["docs/features/alpha/status.yaml"],"modified":["docs/features/beta/tasks.md"],"removed":["README.md"]}]
 	}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -176,10 +189,10 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 
 func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T) {
 	secret := "mysecret"
-	h := &serviceHandler{
-		q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
-		queue:         &recordingEnqueuer{err: errors.New("redis unavailable")},
-		webhookSecret: secret,
+	h := &ServiceHandler{
+		Q:             database.New(&webhookSourceDB{src: testGitHubSource(t)}),
+		Queue:         &recordingEnqueuer{err: errors.New("redis unavailable")},
+		WebhookSecret: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/feature/workspace-data-backend-T7",
@@ -187,12 +200,12 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
 		"commits":[{"modified":["docs/features/workspace-data-backend/tasks/T7.yaml"]}]
 	}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 so GitHub can retry, got %d body=%s", rec.Code, rec.Body.String())
@@ -202,13 +215,13 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	secret := "mysecret"
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		q: database.New(&webhookSourceDB{
+	h := &ServiceHandler{
+		Q: database.New(&webhookSourceDB{
 			src:       testGitHubSource(t),
 			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
 		}),
-		queue:         enqueuer,
-		webhookSecret: secret,
+		Queue:         enqueuer,
+		WebhookSecret: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/workspaces/workspace-data-backend/tasks/T7",
@@ -216,12 +229,12 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
 		"commits":[{"modified":["docs/features/workspace-data-backend/tasks/T7.yaml"]}]
 	}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -238,13 +251,13 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	secret := "mysecret"
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		q: database.New(&webhookSourceDB{
+	h := &ServiceHandler{
+		Q: database.New(&webhookSourceDB{
 			src:       testGitHubSource(t),
 			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
 		}),
-		queue:         enqueuer,
-		webhookSecret: secret,
+		Queue:         enqueuer,
+		WebhookSecret: secret,
 	}
 	body := []byte(`{
 		"ref":"refs/heads/workspaces/workspace-data-backend",
@@ -252,12 +265,12 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
 		"commits":[{"modified":["docs/features/workspace-data-backend/tasks.md"]}]
 	}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
-	h.webhookHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -278,20 +291,20 @@ func TestImportWorkspaceHandler_GitHubNotFoundDoesNotPersistPlaceholder(t *testi
 	db := &recordingWorkspaceDB{}
 	store := &importNoRowsDB{}
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		db:     db,
-		q:      database.New(store),
-		github: github,
-		queue:  enqueuer,
+	h := &ServiceHandler{
+		DB:     db,
+		Q:      database.New(store),
+		GitHub: github,
+		Queue:  enqueuer,
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
 		"repo_url":"https://github.com/acme/missing",
 		"default_branch":"main"
 	}`))
 	rec := httptest.NewRecorder()
 
-	h.importWorkspaceHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing GitHub repo before DB write, got %d body=%s", rec.Code, rec.Body.String())
@@ -319,20 +332,20 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 	}
 	store := &importSlugConflictDB{}
 	enqueuer := &recordingEnqueuer{}
-	h := &serviceHandler{
-		q:      database.New(store),
-		github: github,
-		queue:  enqueuer,
+	h := &ServiceHandler{
+		Q:      database.New(store),
+		GitHub: github,
+		Queue:  enqueuer,
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
 		"repo_url":"https://github.com/Kadamato/test_workspace.git",
 		"default_branch":"main",
 		"name":"Project Workspace"
 	}`))
 	rec := httptest.NewRecorder()
 
-	h.importWorkspaceHandler(rec, req)
+	testRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for duplicate slug on different repo, got %d body=%s", rec.Code, rec.Body.String())
@@ -355,20 +368,20 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 // TestIsDedupeError verifies dedupe error detection.
 func TestIsDedupeError_Match(t *testing.T) {
 	err := &fakeError{"task already exists"}
-	if !isDedupeError(err) {
+	if !pgutil2.IsDedupeError(err) {
 		t.Error("expected dedup error to match")
 	}
 }
 
 func TestIsDedupeError_NoMatch(t *testing.T) {
 	err := &fakeError{"some other error"}
-	if isDedupeError(err) {
+	if pgutil2.IsDedupeError(err) {
 		t.Error("expected non-dedup error to not match")
 	}
 }
 
 func TestIsDedupeError_Nil(t *testing.T) {
-	if isDedupeError(nil) {
+	if pgutil2.IsDedupeError(nil) {
 		t.Error("expected nil error to not match")
 	}
 }
@@ -586,13 +599,29 @@ func (r webhookSourceRow) Scan(dest ...any) error {
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
-			*d = values[i].(pgtype.UUID)
+			v, ok := values[i].(pgtype.UUID)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.UUID, got %T", i, values[i])
+			}
+			*d = v
 		case *string:
-			*d = values[i].(string)
+			v, ok := values[i].(string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected string, got %T", i, values[i])
+			}
+			*d = v
 		case **string:
-			*d = values[i].(*string)
+			v, ok := values[i].(*string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected *string, got %T", i, values[i])
+			}
+			*d = v
 		case *pgtype.Timestamptz:
-			*d = values[i].(pgtype.Timestamptz)
+			v, ok := values[i].(pgtype.Timestamptz)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
+			}
+			*d = v
 		default:
 			return fmt.Errorf("unsupported scan destination %T", dest[i])
 		}
@@ -621,13 +650,29 @@ func (r webhookWorkspaceRow) Scan(dest ...any) error {
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
-			*d = values[i].(pgtype.UUID)
+			v, ok := values[i].(pgtype.UUID)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.UUID, got %T", i, values[i])
+			}
+			*d = v
 		case *string:
-			*d = values[i].(string)
+			v, ok := values[i].(string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected string, got %T", i, values[i])
+			}
+			*d = v
 		case **string:
-			*d = values[i].(*string)
+			v, ok := values[i].(*string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected *string, got %T", i, values[i])
+			}
+			*d = v
 		case *pgtype.Timestamptz:
-			*d = values[i].(pgtype.Timestamptz)
+			v, ok := values[i].(pgtype.Timestamptz)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
+			}
+			*d = v
 		default:
 			return fmt.Errorf("unsupported scan destination %T", dest[i])
 		}
@@ -676,9 +721,9 @@ func testWorkspaceFromID(workspaceID pgtype.UUID, branchPattern string) database
 
 func mustPGUUID(t *testing.T, raw string) pgtype.UUID {
 	t.Helper()
-	var uid pgtype.UUID
-	if err := uid.Scan(raw); err != nil {
-		t.Fatalf("scan uuid %s: %v", raw, err)
+	uid, err := pgutil2.PgUUID(raw)
+	if err != nil {
+		t.Fatalf("parse uuid %s: %v", raw, err)
 	}
 	return uid
 }

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/tiendv89/workspace-github-adapter/internal/queue"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 )
 
 func TestNewTaskSyncTask_Serialization(t *testing.T) {
@@ -47,18 +47,15 @@ func TestTaskSyncPayload_DedupeKeyFieldsOnly(t *testing.T) {
 }
 
 func TestRedisOpt_Default(t *testing.T) {
-	opt, err := queue.RedisOpt("")
-	if err != nil {
-		t.Fatalf("unexpected error for empty REDIS_URL: %v", err)
-	}
+	opt := queue.RedisOpt("")
 	if opt == nil {
 		t.Fatal("expected non-nil RedisConnOpt")
 	}
 }
 
-func TestRedisOpt_InvalidURL(t *testing.T) {
-	_, err := queue.RedisOpt("not-a-valid-redis-url://bad")
-	if err == nil {
-		t.Fatal("expected error for invalid Redis URL")
+func TestRedisOpt_WithAddr(t *testing.T) {
+	opt := queue.RedisOpt("redis-host:6380")
+	if opt == nil {
+		t.Fatal("expected non-nil RedisConnOpt")
 	}
 }

@@ -1,0 +1,35 @@
+log:
+  level: debug
+
+api:
+  http:
+    address: ":8081"
+    mode: debug
+
+db:
+  host: 127.0.0.1
+  port: 25432
+  db_name: workflow_backend
+  user: workflow_backend
+  password: workflow_backend
+  conn_life_time_seconds: 300
+  max_idle_conns: 10
+  max_open_conns: 30
+  log_level: 1
+  auto_migration: false
+  migration_dir: "file://migrations"
+
+redis:
+  init_address:
+    - localhost:26379
+  select_db:
+  username:
+  password:
+  disable_cache: false
+
+github:
+  token: ""
+  webhook_secret: "a"
+
+sync:
+  stale_threshold_minutes: 30
