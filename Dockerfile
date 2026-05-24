@@ -1,5 +1,5 @@
 # Vendor stage
-FROM golang:1.25.5 AS dep
+FROM golang:1.25.8 AS dep
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN GO111MODULE=on go mod download
@@ -7,7 +7,7 @@ COPY . .
 RUN go mod vendor
 
 # Build binary stage
-FROM golang:1.25.5 AS build
+FROM golang:1.25.8 AS build
 WORKDIR /build
 COPY --from=dep /build .
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o server -tags nethttpomithttp2 ./cmd
