@@ -25,7 +25,7 @@ import (
 )
 
 // buildSig computes the HMAC-SHA256 signature for a payload.
-func buildSig(secret string, body []byte) string {
+func buildSig(secret string, body []byte) string { //nolint:unparam
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
@@ -586,13 +586,13 @@ func (r webhookSourceRow) Scan(dest ...any) error {
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
-			*d = values[i].(pgtype.UUID)
+			*d = values[i].(pgtype.UUID) //nolint:errcheck
 		case *string:
-			*d = values[i].(string)
+			*d = values[i].(string) //nolint:errcheck
 		case **string:
-			*d = values[i].(*string)
+			*d = values[i].(*string) //nolint:errcheck
 		case *pgtype.Timestamptz:
-			*d = values[i].(pgtype.Timestamptz)
+			*d = values[i].(pgtype.Timestamptz) //nolint:errcheck
 		default:
 			return fmt.Errorf("unsupported scan destination %T", dest[i])
 		}
@@ -621,13 +621,13 @@ func (r webhookWorkspaceRow) Scan(dest ...any) error {
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
-			*d = values[i].(pgtype.UUID)
+			*d = values[i].(pgtype.UUID) //nolint:errcheck
 		case *string:
-			*d = values[i].(string)
+			*d = values[i].(string) //nolint:errcheck
 		case **string:
-			*d = values[i].(*string)
+			*d = values[i].(*string) //nolint:errcheck
 		case *pgtype.Timestamptz:
-			*d = values[i].(pgtype.Timestamptz)
+			*d = values[i].(pgtype.Timestamptz) //nolint:errcheck
 		default:
 			return fmt.Errorf("unsupported scan destination %T", dest[i])
 		}

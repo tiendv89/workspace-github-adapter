@@ -653,15 +653,15 @@ func scanValues(dest []any, values []any) error {
 	for i, d := range dest {
 		switch out := d.(type) {
 		case *pgtype.UUID:
-			*out = values[i].(pgtype.UUID)
+			*out = values[i].(pgtype.UUID) //nolint:errcheck
 		case *string:
-			*out = values[i].(string)
+			*out = values[i].(string) //nolint:errcheck
 		case **string:
-			*out = values[i].(*string)
+			*out = values[i].(*string) //nolint:errcheck
 		case *json.RawMessage:
-			*out = values[i].(json.RawMessage)
+			*out = values[i].(json.RawMessage) //nolint:errcheck
 		case *pgtype.Timestamptz:
-			*out = values[i].(pgtype.Timestamptz)
+			*out = values[i].(pgtype.Timestamptz) //nolint:errcheck
 		default:
 			return errors.New("unsupported scan destination")
 		}
