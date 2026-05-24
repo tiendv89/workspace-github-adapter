@@ -5,8 +5,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
 )
+
+var G *Config
 
 type Config struct {
 	Log    LogConfig    `mapstructure:"log"`
@@ -86,6 +89,32 @@ func (c *Config) StaleThreshold() time.Duration {
 		return 30 * time.Minute
 	}
 	return time.Duration(m) * time.Minute
+}
+
+// Init loads configuration into the global G variable. Called via cobra.OnInitialize.
+func Init(path string) {
+	v := viper.New()
+
+	v.SetDefault("log.level", "info")
+	v.SetDefault("api.http.address", ":8080")
+	v.SetDefault("sync.stale_threshold_minutes", 30)
+
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	if path != "" {
+		v.SetConfigFile(path)
+		if err := v.ReadInConfig(); err != nil {
+			log.Warn().Err(err).Msg("viper.ReadInConfig failed")
+		}
+	}
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		log.Err(err).Msg("viper.Unmarshal failed")
+		panic(err)
+	}
+	G = &cfg
 }
 
 // Load reads configuration from the YAML file at path and applies environment-variable overrides.

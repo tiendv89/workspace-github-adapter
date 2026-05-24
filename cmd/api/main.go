@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"context"
@@ -11,52 +11,25 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	dbadapter "github.com/tiendv89/workspace-github-adapter/pkg/adapter/db"
-	ghadapter "github.com/tiendv89/workspace-github-adapter/pkg/github"
-	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
 	"github.com/tiendv89/workspace-github-adapter/configs"
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/handler"
+	dbadapter "github.com/tiendv89/workspace-github-adapter/pkg/adapter/db"
+	ghadapter "github.com/tiendv89/workspace-github-adapter/pkg/github"
+	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 )
 
-func main() {
-	var cfgPath string
-
-	root := &cobra.Command{Use: "api"}
-	root.PersistentFlags().StringVarP(&cfgPath, "config", "c", "configs/config.yaml", "path to config YAML")
-
-	root.AddCommand(serveCmd(&cfgPath))
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
-	}
+var Command = &cobra.Command{
+	Use:   "api",
+	Short: "Start the adapter HTTP service",
+	RunE:  runServe,
 }
 
-func serveCmd(cfgPath *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "serve",
-		Short: "Start the adapter HTTP service",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runServe(*cfgPath)
-		},
-	}
-}
-
-func runServe(cfgPath string) error {
-	cfg, err := configs.Load(cfgPath)
-	if err != nil {
-		return fmt.Errorf("config: %w", err)
-	}
-
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	level, err := zerolog.ParseLevel(cfg.Log.Level)
-	if err != nil {
-		level = zerolog.InfoLevel
-	}
-	zerolog.SetGlobalLevel(level)
+func runServe(_ *cobra.Command, _ []string) error {
+	cfg := configs.G
 
 	if cfg.GitHub.WebhookSecret == "" {
 		log.Fatal().Msg("GITHUB_WEBHOOK_SECRET is required for api webhooks")
