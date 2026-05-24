@@ -22,4 +22,4 @@ COPY --from=builder /out/adapter-worker /adapter-worker
 
 EXPOSE 8080
 
-CMD ["/adapter-service"]
+CMD ["/adapter-service", "serve"]

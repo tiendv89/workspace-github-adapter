@@ -47,7 +47,7 @@ services:
 
   adapter-worker:
     build: .
-    command: ["/adapter-worker"]
+    command: ["/adapter-worker", "work"]
     environment:
       DATABASE_URL: postgres://workspace_adapter:workspace_adapter@postgres:5432/workspace_adapter?sslmode=disable
       REDIS_URL: redis://redis:6379/0

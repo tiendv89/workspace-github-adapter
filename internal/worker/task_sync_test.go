@@ -1,4 +1,4 @@
-package main
+package worker
 
 import (
 	"context"
@@ -113,9 +113,9 @@ func makeTaskSyncTask(t *testing.T, payload queue.TaskSyncPayload) *asynq.Task {
 
 // TestHandleTaskSync_BadPayload verifies that a malformed payload returns a non-retryable error.
 func TestHandleTaskSync_BadPayload(t *testing.T) {
-	h := &handler{db: &stubDB{}, github: &stubGitHub{}}
+	h := &Handler{DB: &stubDB{}, GitHub: &stubGitHub{}}
 	task := asynq.NewTask(queue.TypeTaskSync, []byte("not-json"))
-	err := h.handleTaskSync(context.Background(), task)
+	err := h.HandleTaskSync(context.Background(), task)
 	if err == nil {
 		t.Fatal("expected error for bad payload")
 	}
@@ -124,14 +124,14 @@ func TestHandleTaskSync_BadPayload(t *testing.T) {
 func TestHandleWorkspaceSync_MissingWorkspaceIDDoesNotCreateWorkspace(t *testing.T) {
 	githubCalled := false
 	saveCalled := false
-	h := &handler{
-		db: &stubDB{
+	h := &Handler{
+		DB: &stubDB{
 			saveSnap: func(context.Context, string, *domain.WorkspaceSnapshot) error {
 				saveCalled = true
 				return nil
 			},
 		},
-		github: &stubGitHub{
+		GitHub: &stubGitHub{
 			importWorkspace: func(context.Context, domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
 				githubCalled = true
 				return &domain.WorkspaceSnapshot{Name: "Test", Slug: "test"}, nil
@@ -144,7 +144,7 @@ func TestHandleWorkspaceSync_MissingWorkspaceIDDoesNotCreateWorkspace(t *testing
 		t.Fatalf("marshal workspace sync payload: %v", err)
 	}
 
-	err = h.handleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
+	err = h.HandleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
 	if !errors.Is(err, asynq.SkipRetry) {
 		t.Fatalf("expected SkipRetry for missing workspace_id, got %v", err)
 	}
@@ -161,24 +161,24 @@ func TestHandleWorkspaceSync_CleanupFailureSkipsImport(t *testing.T) {
 	saveCalled := false
 	cleanupErr := errors.New("redis unavailable")
 	runDB := newFakeSyncRunDB(t)
-	h := &handler{
-		db: &stubDB{
+	h := &Handler{
+		DB: &stubDB{
 			saveSnap: func(context.Context, string, *domain.WorkspaceSnapshot) error {
 				saveCalled = true
 				return nil
 			},
 		},
-		github: &stubGitHub{
+		GitHub: &stubGitHub{
 			importWorkspace: func(context.Context, domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
 				importCalled = true
 				t.Fatal("GitHub import must not run when pending task cleanup fails")
 				return nil, nil
 			},
 		},
-		newPendingTaskInspector: func() pendingTaskInspector {
+		NewPendingTaskInspector: func() PendingTaskInspector {
 			return &fakePendingTaskInspector{listErr: cleanupErr}
 		},
-		q: database.New(runDB),
+		Q: database.New(runDB),
 	}
 	payload := queue.WorkspaceSyncPayload{
 		WorkspaceID:   "00000000-0000-0000-0000-000000000001",
@@ -190,7 +190,7 @@ func TestHandleWorkspaceSync_CleanupFailureSkipsImport(t *testing.T) {
 		t.Fatalf("marshal workspace sync payload: %v", err)
 	}
 
-	err = h.handleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
+	err = h.HandleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
 	if err == nil {
 		t.Fatal("expected cleanup failure to fail the full sync")
 	}
@@ -227,14 +227,14 @@ func TestHandleWorkspaceSync_SourceErrorsSkipPersistence(t *testing.T) {
 		Retryable: false,
 		Path:      "docs/features/alpha/tasks/T2.yaml",
 	}
-	h := &handler{
-		db: &stubDB{
+	h := &Handler{
+		DB: &stubDB{
 			saveSnap: func(context.Context, string, *domain.WorkspaceSnapshot) error {
 				saveCalled = true
 				return nil
 			},
 		},
-		github: &stubGitHub{
+		GitHub: &stubGitHub{
 			importWorkspace: func(context.Context, domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
 				return &domain.WorkspaceSnapshot{
 					Name:         "workspace",
@@ -243,10 +243,10 @@ func TestHandleWorkspaceSync_SourceErrorsSkipPersistence(t *testing.T) {
 				}, nil
 			},
 		},
-		newPendingTaskInspector: func() pendingTaskInspector {
+		NewPendingTaskInspector: func() PendingTaskInspector {
 			return &fakePendingTaskInspector{}
 		},
-		q: database.New(runDB),
+		Q: database.New(runDB),
 	}
 	payload := queue.WorkspaceSyncPayload{
 		WorkspaceID:   "00000000-0000-0000-0000-000000000001",
@@ -258,7 +258,7 @@ func TestHandleWorkspaceSync_SourceErrorsSkipPersistence(t *testing.T) {
 		t.Fatalf("marshal workspace sync payload: %v", err)
 	}
 
-	err = h.handleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
+	err = h.HandleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
 	if err == nil {
 		t.Fatal("expected full sync to fail when snapshot contains source errors")
 	}
@@ -293,19 +293,19 @@ func TestHandleTargetedSync_FetchFeatureFailureSkipsFeaturePersistence(t *testin
 		Retryable: false,
 		Path:      "docs/features/alpha-feature/tasks/T2.yaml",
 	}
-	h := &handler{
-		db: &stubDB{
+	h := &Handler{
+		DB: &stubDB{
 			saveFeatSnap: func(context.Context, string, domain.FeatureSnapshot) error {
 				saveCalled = true
 				return nil
 			},
 		},
-		github: &stubGitHub{
+		GitHub: &stubGitHub{
 			fetchFeat: func(context.Context, string, string, string) (*domain.FeatureSnapshot, error) {
 				return nil, fetchErr
 			},
 		},
-		q: database.New(runDB),
+		Q: database.New(runDB),
 	}
 	payload := queue.WorkspaceSyncPayload{
 		WorkspaceID: "00000000-0000-0000-0000-000000000001",
@@ -368,10 +368,10 @@ func TestClearPendingTaskSyncJobsForWorkspaceDeletesOnlyMatchingWorkspace(t *tes
 
 // TestHandleTaskSync_MissingFields verifies that empty required fields return an error.
 func TestHandleTaskSync_MissingFields(t *testing.T) {
-	h := &handler{db: &stubDB{}, github: &stubGitHub{}}
+	h := &Handler{DB: &stubDB{}, GitHub: &stubGitHub{}}
 	payload := queue.TaskSyncPayload{WorkspaceID: "ws-123"} // missing FeatureID, TaskID
 	task := makeTaskSyncTask(t, payload)
-	err := h.handleTaskSync(context.Background(), task)
+	err := h.HandleTaskSync(context.Background(), task)
 	if err == nil {
 		t.Fatal("expected error for missing required fields")
 	}
@@ -410,9 +410,9 @@ func TestDeriveBranch_Comprehensive(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := deriveBranch(tc.pattern, tc.featureID, tc.taskID)
+			got := DeriveBranch(tc.pattern, tc.featureID, tc.taskID)
 			if got != tc.want {
-				t.Errorf("deriveBranch(%q, %q, %q) = %q, want %q",
+				t.Errorf("DeriveBranch(%q, %q, %q) = %q, want %q",
 					tc.pattern, tc.featureID, tc.taskID, got, tc.want)
 			}
 		})
@@ -430,20 +430,20 @@ func TestHandleTaskSync_RetryableFailure(t *testing.T) {
 	}
 
 	fetchCalled := false
-	h := &handler{
-		db: &stubDB{},
-		github: &stubGitHub{
+	h := &Handler{
+		DB: &stubDB{},
+		GitHub: &stubGitHub{
 			fetchTask: func(_ context.Context, _, _, _, _ string) (*domain.TaskSnapshot, error) {
 				fetchCalled = true
 				return nil, retryableErr
 			},
 		},
-		q: nil, // q is not needed here since GetWorkspace won't be called
+		Q: nil, // q is not needed here since GetWorkspace won't be called
 	}
 
-	// We can't easily test the full handleTaskSync without a DB connection for GetWorkspace,
+	// We can't easily test the full HandleTaskSync without a DB connection for GetWorkspace,
 	// but we can verify that FetchTask propagates retryable errors by calling it directly.
-	_, err := h.github.FetchTask(context.Background(), "https://github.com/o/r", "feature/f-T1", "f", "T1")
+	_, err := h.GitHub.FetchTask(context.Background(), "https://github.com/o/r", "feature/f-T1", "f", "T1")
 	if !fetchCalled {
 		t.Error("expected FetchTask to be called")
 	}

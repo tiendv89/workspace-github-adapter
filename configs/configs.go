@@ -59,6 +59,7 @@ func (c *Config) StaleThreshold() time.Duration {
 }
 
 // Load reads configuration from the YAML file at path and applies environment-variable overrides.
+// If the file does not exist, env-var values and defaults are used directly.
 // Environment variables use underscores as separators; e.g. SERVER_PORT overrides server.port.
 func Load(path string) (*Config, error) {
 	v := viper.New()
@@ -67,13 +68,16 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("sync.stale_threshold_minutes", 30)
 
-	v.SetConfigFile(path)
-	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("read config %s: %w", path, err)
-	}
-
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+
+	v.SetConfigFile(path)
+	if err := v.ReadInConfig(); err != nil {
+		// Allow a missing config file; env vars + defaults are sufficient.
+		if !isNotFound(err) {
+			return nil, fmt.Errorf("read config %s: %w", path, err)
+		}
+	}
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
@@ -83,4 +87,10 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("database.url is required")
 	}
 	return &cfg, nil
+}
+
+// isNotFound returns true when viper reports that the config file was not found.
+func isNotFound(err error) bool {
+	_, ok := err.(viper.ConfigFileNotFoundError)
+	return ok || (err != nil && strings.Contains(err.Error(), "no such file"))
 }
