@@ -17,7 +17,6 @@ FROM alpine:latest
 WORKDIR /app
 COPY configs/config.yaml configs/config.yaml
 COPY --from=build /build/server server
-COPY migrations migrations
 RUN apk update
 RUN apk upgrade
 RUN apk add ca-certificates
