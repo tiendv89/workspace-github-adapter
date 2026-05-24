@@ -37,16 +37,21 @@ func testRouter(h *ServiceHandler) *gin.Engine {
 	return r
 }
 
-// buildSig computes the HMAC-SHA256 signature for a payload.
+// buildSig computes the HMAC-SHA256 signature for a payload using "mysecret".
 func buildSig(body []byte) string {
-	mac := hmac.New(sha256.New, []byte("mysecret"))
+	return buildSigWith(body, "mysecret")
+}
+
+// buildSigWith computes the HMAC-SHA256 signature for a payload using the given secret.
+func buildSigWith(body []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 // TestWebhookHandler_InvalidSignature verifies that requests with wrong HMAC are rejected.
 func TestWebhookHandler_InvalidSignature(t *testing.T) {
-	h := &ServiceHandler{WebhookSecrets: "mysecret"}
+	h := &ServiceHandler{WebhookSecrets: []string{"mysecret"}}
 
 	body := []byte(`{"ref":"refs/heads/main","repository":{"clone_url":"https://github.com/o/r"},"commits":[]}`)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
@@ -74,7 +79,7 @@ func TestWebhookHandler_MethodNotAllowed(t *testing.T) {
 // TestWebhookHandler_NonPushEvent verifies that non-push events are ignored with 200.
 func TestWebhookHandler_NonPushEvent(t *testing.T) {
 	secret := "mysecret"
-	h := &ServiceHandler{WebhookSecrets: secret}
+	h := &ServiceHandler{WebhookSecrets: []string{secret}}
 	body := []byte(`{}`)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "pull_request")
@@ -159,7 +164,7 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 	h := &ServiceHandler{
 		Q:              database.New(&webhookSourceDB{src: testGitHubSource(t)}),
 		Queue:          enqueuer,
-		WebhookSecrets: secret,
+		WebhookSecrets: []string{secret},
 	}
 	body := []byte(`{
 		"ref":"refs/heads/main",
@@ -192,7 +197,7 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 	h := &ServiceHandler{
 		Q:              database.New(&webhookSourceDB{src: testGitHubSource(t)}),
 		Queue:          &recordingEnqueuer{err: errors.New("redis unavailable")},
-		WebhookSecrets: secret,
+		WebhookSecrets: []string{secret},
 	}
 	body := []byte(`{
 		"ref":"refs/heads/feature/workspace-data-backend-T7",
@@ -221,7 +226,7 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
 		}),
 		Queue:          enqueuer,
-		WebhookSecrets: secret,
+		WebhookSecrets: []string{secret},
 	}
 	body := []byte(`{
 		"ref":"refs/heads/workspaces/workspace-data-backend/tasks/T7",
@@ -257,7 +262,7 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 			workspace: testWorkspace(t, "workspaces/{feature_id}/tasks/{work_id}"),
 		}),
 		Queue:          enqueuer,
-		WebhookSecrets: secret,
+		WebhookSecrets: []string{secret},
 	}
 	body := []byte(`{
 		"ref":"refs/heads/workspaces/workspace-data-backend",
@@ -281,6 +286,52 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	got := enqueuer.workspaceSyncs[0]
 	if got.FeatureID != "workspace-data-backend" || got.Mode != "targeted" || got.Trigger != "webhook_feature" {
 		t.Fatalf("workspace sync payload = %+v, want targeted webhook_feature for workspace-data-backend", got)
+	}
+}
+
+// TestWebhookHandler_MultiSecret_SecondSecretMatches verifies that a request signed with
+// the second configured secret is accepted (returns 200).
+func TestWebhookHandler_MultiSecret_SecondSecretMatches(t *testing.T) {
+	enqueuer := &recordingEnqueuer{}
+	h := &ServiceHandler{
+		Q:              database.New(&webhookSourceDB{src: testGitHubSource(t)}),
+		Queue:          enqueuer,
+		WebhookSecrets: []string{"firstsecret", "secondsecret"},
+	}
+	body := []byte(`{
+		"ref":"refs/heads/main",
+		"after":"abc123",
+		"repository":{"clone_url":"https://github.com/acme/workspace.git"},
+		"commits":[{"added":["docs/features/alpha/status.yaml"],"modified":[],"removed":[]}]
+	}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-Hub-Signature-256", buildSigWith(body, "secondsecret"))
+	rec := httptest.NewRecorder()
+
+	testRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 when second secret matches, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestWebhookHandler_MultiSecret_NoMatch verifies that a request not matching any configured
+// secret returns 401.
+func TestWebhookHandler_MultiSecret_NoMatch(t *testing.T) {
+	h := &ServiceHandler{
+		WebhookSecrets: []string{"secret1", "secret2"},
+	}
+	body := []byte(`{"ref":"refs/heads/main","repository":{"clone_url":"https://github.com/o/r"},"commits":[]}`)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-Hub-Signature-256", buildSigWith(body, "unknownsecret"))
+	rec := httptest.NewRecorder()
+
+	testRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when no secret matches, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

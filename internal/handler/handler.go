@@ -21,5 +21,5 @@ type ServiceHandler struct {
 	GitHub         domain.GitHubWorkspaceAdapter
 	Token          string
 	Queue          TaskEnqueuer
-	WebhookSecrets string // comma-separated; T3 splits into []string for multi-secret routing
+	WebhookSecrets []string
 }
