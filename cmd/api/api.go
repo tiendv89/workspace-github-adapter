@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+
 	dbadapter "github.com/tiendv89/workspace-github-adapter/internal/adapter/db"
 	ghadapter "github.com/tiendv89/workspace-github-adapter/internal/github"
 

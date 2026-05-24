@@ -1,16 +1,15 @@
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - unparam
@@ -18,15 +17,21 @@ linters:
     - copyloopvar
     - gocritic
     - noctx
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable:
+        - shadow
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-  govet:
-    shadow: true
-  goimports:
-    local-prefixes: github.com/tiendv89/workspace-github-adapter
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/tiendv89/workspace-github-adapter
 
 issues:
-  exclude-use-default: false
   max-same-issues: 0

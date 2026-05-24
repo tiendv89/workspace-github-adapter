@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	pgutil2 "github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
 	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
@@ -26,8 +27,8 @@ import (
 )
 
 // buildSig computes the HMAC-SHA256 signature for a payload.
-func buildSig(secret string, body []byte) string { //nolint:unparam
-	mac := hmac.New(sha256.New, []byte(secret))
+func buildSig(body []byte) string {
+	mac := hmac.New(sha256.New, []byte("mysecret"))
 	mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
@@ -66,7 +67,7 @@ func TestWebhookHandler_NonPushEvent(t *testing.T) {
 	body := []byte(`{}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "pull_request")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 	h.WebhookHandler(rec, req)
 	if rec.Code != http.StatusOK {
@@ -157,7 +158,7 @@ func TestWebhookHandler_BaseBranchEnqueuesTargetedSyncs(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
 	h.WebhookHandler(rec, req)
@@ -190,7 +191,7 @@ func TestWebhookHandler_TaskBranchEnqueueFailureReturnsServerError(t *testing.T)
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
 	h.WebhookHandler(rec, req)
@@ -219,7 +220,7 @@ func TestWebhookHandler_TaskBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
 	h.WebhookHandler(rec, req)
@@ -255,7 +256,7 @@ func TestWebhookHandler_FeatureBranchUsesWorkspaceBranchPattern(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", buildSig(secret, body))
+	req.Header.Set("X-Hub-Signature-256", buildSig(body))
 	rec := httptest.NewRecorder()
 
 	h.WebhookHandler(rec, req)
@@ -587,13 +588,29 @@ func (r webhookSourceRow) Scan(dest ...any) error {
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
-			*d = values[i].(pgtype.UUID) //nolint:errcheck
+			v, ok := values[i].(pgtype.UUID)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.UUID, got %T", i, values[i])
+			}
+			*d = v
 		case *string:
-			*d = values[i].(string) //nolint:errcheck
+			v, ok := values[i].(string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected string, got %T", i, values[i])
+			}
+			*d = v
 		case **string:
-			*d = values[i].(*string) //nolint:errcheck
+			v, ok := values[i].(*string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected *string, got %T", i, values[i])
+			}
+			*d = v
 		case *pgtype.Timestamptz:
-			*d = values[i].(pgtype.Timestamptz) //nolint:errcheck
+			v, ok := values[i].(pgtype.Timestamptz)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
+			}
+			*d = v
 		default:
 			return fmt.Errorf("unsupported scan destination %T", dest[i])
 		}
@@ -622,13 +639,29 @@ func (r webhookWorkspaceRow) Scan(dest ...any) error {
 	for i := range dest {
 		switch d := dest[i].(type) {
 		case *pgtype.UUID:
-			*d = values[i].(pgtype.UUID) //nolint:errcheck
+			v, ok := values[i].(pgtype.UUID)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.UUID, got %T", i, values[i])
+			}
+			*d = v
 		case *string:
-			*d = values[i].(string) //nolint:errcheck
+			v, ok := values[i].(string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected string, got %T", i, values[i])
+			}
+			*d = v
 		case **string:
-			*d = values[i].(*string) //nolint:errcheck
+			v, ok := values[i].(*string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected *string, got %T", i, values[i])
+			}
+			*d = v
 		case *pgtype.Timestamptz:
-			*d = values[i].(pgtype.Timestamptz) //nolint:errcheck
+			v, ok := values[i].(pgtype.Timestamptz)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
+			}
+			*d = v
 		default:
 			return fmt.Errorf("unsupported scan destination %T", dest[i])
 		}

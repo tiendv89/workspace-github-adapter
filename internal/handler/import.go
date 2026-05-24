@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
+
 	"github.com/tiendv89/workspace-github-adapter/pkg/httputil"
 	pgutil2 "github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
 	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
@@ -64,10 +65,12 @@ func (h *ServiceHandler) ImportWorkspaceHandler(w http.ResponseWriter, r *http.R
 		httputil.WriteAnyError(w, err)
 		return
 	}
-	if existing, found, err := h.findExistingImport(r.Context(), owner, repo); err != nil {
+	existing, found, err := h.findExistingImport(r.Context(), owner, repo)
+	if err != nil {
 		httputil.WriteAnyError(w, err)
 		return
-	} else if found {
+	}
+	if found {
 		writeExistingImport(w, existing, req.RepoURL, req.DefaultBranch)
 		return
 	}
@@ -204,7 +207,7 @@ func (h *ServiceHandler) createImportPlaceholder(ctx context.Context, workspaceI
 	if err != nil {
 		return "", fmt.Errorf("begin import placeholder transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	actualWorkspaceID, err := h.createImportPlaceholderWithQueries(ctx, h.Q.WithTx(tx), uid, name, slug, repoURL, defaultBranch, managementRepoID)
 	if err != nil {

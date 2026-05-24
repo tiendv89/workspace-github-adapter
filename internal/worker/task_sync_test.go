@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
@@ -653,15 +655,35 @@ func scanValues(dest []any, values []any) error {
 	for i, d := range dest {
 		switch out := d.(type) {
 		case *pgtype.UUID:
-			*out = values[i].(pgtype.UUID) //nolint:errcheck
+			v, ok := values[i].(pgtype.UUID)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.UUID, got %T", i, values[i])
+			}
+			*out = v
 		case *string:
-			*out = values[i].(string) //nolint:errcheck
+			v, ok := values[i].(string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected string, got %T", i, values[i])
+			}
+			*out = v
 		case **string:
-			*out = values[i].(*string) //nolint:errcheck
+			v, ok := values[i].(*string)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected *string, got %T", i, values[i])
+			}
+			*out = v
 		case *json.RawMessage:
-			*out = values[i].(json.RawMessage) //nolint:errcheck
+			v, ok := values[i].(json.RawMessage)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected json.RawMessage, got %T", i, values[i])
+			}
+			*out = v
 		case *pgtype.Timestamptz:
-			*out = values[i].(pgtype.Timestamptz) //nolint:errcheck
+			v, ok := values[i].(pgtype.Timestamptz)
+			if !ok {
+				return fmt.Errorf("values[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
+			}
+			*out = v
 		default:
 			return errors.New("unsupported scan destination")
 		}

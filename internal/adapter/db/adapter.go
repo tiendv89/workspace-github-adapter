@@ -379,7 +379,8 @@ func (a *Adapter) SaveSnapshot(ctx context.Context, workspaceID string, snapshot
 	if err != nil {
 		return err
 	}
-	if _, err := a.q.GetWorkspace(ctx, uid); err != nil {
+	_, err = a.q.GetWorkspace(ctx, uid)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.NewDatabaseError(domain.ErrDatabaseNotFound, "workspace not found: "+workspaceID)
 		}
@@ -390,7 +391,7 @@ func (a *Adapter) SaveSnapshot(ctx context.Context, workspaceID string, snapshot
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := upsertSnapshot(ctx, a.q.WithTx(tx), uid, snapshot); err != nil {
 		return err
@@ -409,7 +410,7 @@ func (a *Adapter) SaveFeatureSnapshot(ctx context.Context, workspaceID string, s
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := upsertFeatureSnapshot(ctx, a.q.WithTx(tx), uid, snap); err != nil {
 		return err
@@ -434,15 +435,15 @@ func (a *Adapter) SaveTaskSnapshot(ctx context.Context, workspaceID string, snap
 		// has materialized the parent feature row. In GitHub payloads, feature_id
 		// is the human-readable feature name; create a minimal feature row and let
 		// later feature/workspace sync enrich it while preserving UUID references.
-		feature, err := a.q.UpsertWorkspaceFeature(ctx, database.UpsertWorkspaceFeatureParams{
+		feature, upsertErr := a.q.UpsertWorkspaceFeature(ctx, database.UpsertWorkspaceFeatureParams{
 			WorkspaceID: uid,
 			FeatureName: snap.FeatureID,
 			Title:       snap.FeatureID,
 			Stages:      json.RawMessage("[]"),
 			SourcePath:  snap.SourcePath,
 		})
-		if err != nil {
-			return fmt.Errorf("upsert placeholder feature for task sync %s: %w", snap.FeatureID, err)
+		if upsertErr != nil {
+			return fmt.Errorf("upsert placeholder feature for task sync %s: %w", snap.FeatureID, upsertErr)
 		}
 		featureUUID = feature.ID
 	}
@@ -451,7 +452,7 @@ func (a *Adapter) SaveTaskSnapshot(ctx context.Context, workspaceID string, snap
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := upsertTaskSnapshot(ctx, a.q.WithTx(tx), uid, featureUUID, snap.FeatureID, snap); err != nil {
 		return err
@@ -688,10 +689,22 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 }
 
 func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureUUID pgtype.UUID, featureName string, t domain.TaskSnapshot) error {
-	dependsOn, _ := json.Marshal(t.DependsOn) //nolint:errcheck
-	execution, _ := json.Marshal(t.Execution) //nolint:errcheck
-	pr, _ := json.Marshal(t.PR)               //nolint:errcheck
-	wsPr, _ := json.Marshal(t.WorkspacePR)    //nolint:errcheck
+	dependsOn, err := json.Marshal(t.DependsOn)
+	if err != nil {
+		return fmt.Errorf("marshal task depends_on: %w", err)
+	}
+	execution, err := json.Marshal(t.Execution)
+	if err != nil {
+		return fmt.Errorf("marshal task execution: %w", err)
+	}
+	pr, err := json.Marshal(t.PR)
+	if err != nil {
+		return fmt.Errorf("marshal task pr: %w", err)
+	}
+	wsPr, err := json.Marshal(t.WorkspacePR)
+	if err != nil {
+		return fmt.Errorf("marshal task workspace_pr: %w", err)
+	}
 
 	taskRow, err := q.UpsertWorkspaceTask(ctx, database.UpsertWorkspaceTaskParams{
 		WorkspaceID:   uid,
@@ -726,8 +739,11 @@ func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUI
 // Uses the partial unique index on (workspace_id, feature_id, sequence) WHERE task_id IS NULL.
 func upsertFeatureActivity(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureUUID pgtype.UUID, f domain.FeatureSnapshot) error {
 	for i, evt := range f.Activity {
-		raw, _ := json.Marshal(evt) //nolint:errcheck
-		_, err := q.UpsertFeatureActivityEvent(ctx, database.UpsertFeatureActivityEventParams{
+		raw, err := json.Marshal(evt)
+		if err != nil {
+			return fmt.Errorf("marshal feature activity event %s[%d]: %w", f.FeatureID, i, err)
+		}
+		_, err = q.UpsertFeatureActivityEvent(ctx, database.UpsertFeatureActivityEventParams{
 			WorkspaceID: uid,
 			ScopeType:   "feature",
 			FeatureID:   featureUUID,
@@ -750,8 +766,11 @@ func upsertFeatureActivity(ctx context.Context, q *database.Queries, uid pgtype.
 // Uses the partial unique index on (workspace_id, feature_id, task_id, sequence) WHERE task_id IS NOT NULL.
 func upsertTaskActivity(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureUUID pgtype.UUID, featureName string, taskUUID pgtype.UUID, t domain.TaskSnapshot) error {
 	for i, evt := range t.Activity {
-		raw, _ := json.Marshal(evt) //nolint:errcheck
-		_, err := q.UpsertTaskActivityEvent(ctx, database.UpsertTaskActivityEventParams{
+		raw, err := json.Marshal(evt)
+		if err != nil {
+			return fmt.Errorf("marshal task activity event %s[%d]: %w", t.TaskID, i, err)
+		}
+		_, err = q.UpsertTaskActivityEvent(ctx, database.UpsertTaskActivityEventParams{
 			WorkspaceID: uid,
 			ScopeType:   "task",
 			FeatureID:   featureUUID,

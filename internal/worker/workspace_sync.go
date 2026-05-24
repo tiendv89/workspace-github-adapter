@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
+
 	"github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
 	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
 	"github.com/tiendv89/workspace-github-adapter/pkg/urlutil"
@@ -164,7 +165,8 @@ func (h *Handler) handleTargetedSync(ctx context.Context, payload queue.Workspac
 		return err
 	}
 
-	if err := h.DB.SaveFeatureSnapshot(ctx, payload.WorkspaceID, *snap); err != nil {
+	err = h.DB.SaveFeatureSnapshot(ctx, payload.WorkspaceID, *snap)
+	if err != nil {
 		h.recordFailedRun(ctx, payload, trigger, "targeted", ref, err)
 		return err
 	}

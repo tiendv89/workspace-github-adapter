@@ -7,6 +7,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
+
 	"github.com/tiendv89/workspace-github-adapter/pkg/httputil"
 	pgutil2 "github.com/tiendv89/workspace-github-adapter/pkg/pgutil"
 	"github.com/tiendv89/workspace-github-adapter/pkg/queue"
