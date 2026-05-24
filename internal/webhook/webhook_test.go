@@ -5,7 +5,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -43,8 +42,7 @@ func TestReadBody_Oversized(t *testing.T) {
 }
 
 func TestReadBody_Empty(t *testing.T) {
-	r, _ := http.NewRequest(http.MethodPost, "/", http.NoBody)
-	r.Body = io.NopCloser(strings.NewReader(""))
+	r, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(""))
 
 	got, err := webhook.ReadBody(r)
 	if err != nil {
