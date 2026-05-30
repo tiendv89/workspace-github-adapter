@@ -76,7 +76,6 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 	snap, err := h.GitHub.ImportWorkspace(ctx, domain.ImportInput{
 		RepoURL:       payload.RepoURL,
 		DefaultBranch: ref,
-		Token:         h.Token,
 	})
 	if err != nil {
 		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)

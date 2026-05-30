@@ -1128,6 +1128,238 @@ func TestActivityEventOccurredAt(t *testing.T) {
 	}
 }
 
+// --- Multi-token support tests ---
+
+func TestSplitTokens_Single(t *testing.T) {
+	tokens := splitTokens("ghp_abc")
+	if len(tokens) != 1 || tokens[0] != "ghp_abc" {
+		t.Fatalf("expected [ghp_abc], got %v", tokens)
+	}
+}
+
+func TestSplitTokens_Multi(t *testing.T) {
+	tokens := splitTokens("ghp_abc,ghp_xyz,ghp_123")
+	if len(tokens) != 3 {
+		t.Fatalf("expected 3 tokens, got %d: %v", len(tokens), tokens)
+	}
+	if tokens[0] != "ghp_abc" || tokens[1] != "ghp_xyz" || tokens[2] != "ghp_123" {
+		t.Errorf("unexpected token values: %v", tokens)
+	}
+}
+
+func TestSplitTokens_Empty(t *testing.T) {
+	tokens := splitTokens("")
+	if len(tokens) != 0 {
+		t.Fatalf("expected empty slice, got %v", tokens)
+	}
+}
+
+func TestSplitTokens_Whitespace(t *testing.T) {
+	tokens := splitTokens("  ghp_abc ,  ghp_xyz  ")
+	if len(tokens) != 2 {
+		t.Fatalf("expected 2 tokens, got %d: %v", len(tokens), tokens)
+	}
+	if tokens[0] != "ghp_abc" || tokens[1] != "ghp_xyz" {
+		t.Errorf("unexpected token values after trim: %v", tokens)
+	}
+}
+
+func TestSplitTokens_TrailingComma(t *testing.T) {
+	tokens := splitTokens("ghp_abc,ghp_xyz,")
+	if len(tokens) != 2 {
+		t.Fatalf("expected 2 tokens (dropping empty), got %d: %v", len(tokens), tokens)
+	}
+}
+
+// --- tokenFor probe-and-cache tests ---
+
+func TestTokenFor_SingleTokenCacheHit(t *testing.T) {
+	// Pre-populate cache so no probe is needed.
+	adapter := &Adapter{
+		token:      "ghp_abc",
+		tokens:     []string{"ghp_abc"},
+		tokenCache: map[string]string{"test-owner": "ghp_abc"},
+	}
+	token, err := adapter.tokenFor(context.Background(), "test-owner", "test-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "ghp_abc" {
+		t.Errorf("expected ghp_abc, got %s", token)
+	}
+}
+
+func TestTokenFor_SingleTokenProbeSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check that the Authorization header carries the probe token.
+		if r.Header.Get("Authorization") != "Bearer ghp_abc" {
+			t.Errorf("expected Authorization: Bearer ghp_abc, got %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id": 123}`))
+	}))
+	defer srv.Close()
+
+	adapter := &Adapter{
+		token:           "ghp_abc",
+		tokens:          []string{"ghp_abc"},
+		tokenCache:      make(map[string]string),
+		probeHTTPClient: &http.Client{Transport: proxyTransport(srv.URL)},
+	}
+	token, err := adapter.tokenFor(context.Background(), "test-owner", "test-repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "ghp_abc" {
+		t.Errorf("expected ghp_abc, got %s", token)
+	}
+	if adapter.tokenCache["test-owner"] != "ghp_abc" {
+		t.Error("expected token to be cached for test-owner")
+	}
+}
+
+func TestTokenFor_MultiTokenFirstSucceeds(t *testing.T) {
+	probeCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probeCalls++
+		// First token is valid — return 200.
+		if r.Header.Get("Authorization") == "Bearer ghp_first" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id": 123}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	adapter := &Adapter{
+		token:           "ghp_first",
+		tokens:          []string{"ghp_first", "ghp_second"},
+		tokenCache:      make(map[string]string),
+		probeHTTPClient: &http.Client{Transport: proxyTransport(srv.URL)},
+	}
+	token, err := adapter.tokenFor(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "ghp_first" {
+		t.Errorf("expected ghp_first, got %s", token)
+	}
+	if probeCalls != 1 {
+		t.Errorf("expected exactly 1 probe call (first token succeeds), got %d", probeCalls)
+	}
+}
+
+func TestTokenFor_MultiTokenSecondSucceeds(t *testing.T) {
+	probeCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probeCalls++
+		auth := r.Header.Get("Authorization")
+		if auth == "Bearer ghp_first" {
+			// First token returns 401 — probe will try next.
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if auth == "Bearer ghp_second" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id": 123}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	adapter := &Adapter{
+		token:           "ghp_first",
+		tokens:          []string{"ghp_first", "ghp_second"},
+		tokenCache:      make(map[string]string),
+		probeHTTPClient: &http.Client{Transport: proxyTransport(srv.URL)},
+	}
+	token, err := adapter.tokenFor(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "ghp_second" {
+		t.Errorf("expected ghp_second (second token succeeds), got %s", token)
+	}
+	if probeCalls != 2 {
+		t.Errorf("expected exactly 2 probe calls (first fails, second succeeds), got %d", probeCalls)
+	}
+	if adapter.tokenCache["owner"] != "ghp_second" {
+		t.Error("expected tokenCache[owner] = ghp_second")
+	}
+}
+
+func TestTokenFor_AllTokensFail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+	}))
+	defer srv.Close()
+
+	adapter := &Adapter{
+		token:           "ghp_first",
+		tokens:          []string{"ghp_first", "ghp_second", "ghp_third"},
+		tokenCache:      make(map[string]string),
+		probeHTTPClient: &http.Client{Transport: proxyTransport(srv.URL)},
+	}
+	_, err := adapter.tokenFor(context.Background(), "owner", "repo")
+	if err == nil {
+		t.Fatal("expected error for all-tokens-fail, got nil")
+	}
+	se, ok := err.(domain.SourceError)
+	if !ok {
+		t.Fatalf("expected SourceError, got %T: %v", err, err)
+	}
+	if se.Code != domain.ErrGitHubUnauthorized {
+		t.Errorf("expected ErrGitHubUnauthorized, got %s", se.Code)
+	}
+	if se.Message != `no valid GitHub token found for owner "owner"` {
+		t.Errorf("unexpected message: %s", se.Message)
+	}
+}
+
+func TestTokenFor_ProbeCacheSecondCall(t *testing.T) {
+	probeCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probeCalls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id": 123}`))
+	}))
+	defer srv.Close()
+
+	adapter := &Adapter{
+		token:           "ghp_t1",
+		tokens:          []string{"ghp_t1", "ghp_t2"},
+		tokenCache:      make(map[string]string),
+		probeHTTPClient: &http.Client{Transport: proxyTransport(srv.URL)},
+	}
+
+	// First call — probe, cache, returns token.
+	token, err := adapter.tokenFor(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("first call unexpected error: %v", err)
+	}
+	if token != "ghp_t1" {
+		t.Errorf("expected ghp_t1, got %s", token)
+	}
+	if probeCalls != 1 {
+		t.Errorf("expected 1 probe call on first invocation, got %d", probeCalls)
+	}
+
+	// Second call — should hit cache, no probe.
+	token2, err := adapter.tokenFor(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("second call unexpected error: %v", err)
+	}
+	if token2 != "ghp_t1" {
+		t.Errorf("expected ghp_t1 on second call, got %s", token2)
+	}
+	if probeCalls != 1 {
+		t.Errorf("expected 0 additional probe calls (cache hit), got %d total", probeCalls)
+	}
+}
+
 func TestImportWorkspaceActivityTimestamps(t *testing.T) {
 	srv := fullWorkspaceServer(t)
 	defer srv.Close()

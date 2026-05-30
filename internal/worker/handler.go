@@ -19,7 +19,6 @@ type Handler struct {
 	DB                      domain.DbWorkspaceAdapter
 	Q                       *database.Queries
 	GitHub                  domain.GitHubWorkspaceAdapter
-	Token                   string
 	RedisOpt                asynq.RedisConnOpt
 	NewPendingTaskInspector func() PendingTaskInspector
 }
