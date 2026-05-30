@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -53,12 +54,24 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("ping db: %w", err)
 	}
 
+	ghAdapter := ghadapter.New(cfg.GitHub.Token)
+	if cfg.GitHub.Token == "" {
+		log.Warn().Msg("github.token is empty — no GitHub credentials configured")
+	} else {
+		count := 0
+		for _, t := range strings.Split(cfg.GitHub.Token, ",") {
+			if strings.TrimSpace(t) != "" {
+				count++
+			}
+		}
+		log.Info().Int("token_count", count).Msg("github adapter initialised")
+	}
+
 	h := &handler.ServiceHandler{
 		DB:            dbadapter.New(pool),
 		Q:             database.New(pool),
 		Pool:          pool,
-		GitHub:        ghadapter.New(cfg.GitHub.Token),
-		Token:         cfg.GitHub.Token,
+		GitHub:        ghAdapter,
 		Queue:         client,
 		WebhookSecret: cfg.GitHub.WebhookSecret,
 	}

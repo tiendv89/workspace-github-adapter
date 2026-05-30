@@ -71,7 +71,6 @@ func (h *ServiceHandler) ImportWorkspaceHandler(c *gin.Context) {
 	snap, err := h.GitHub.FetchWorkspaceMetadata(c.Request.Context(), domain.ImportInput{
 		RepoURL:       req.RepoURL,
 		DefaultBranch: req.DefaultBranch,
-		Token:         h.Token,
 	})
 	if err != nil {
 		httputil.WriteAnyError(c, err)
