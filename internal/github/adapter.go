@@ -9,9 +9,11 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
@@ -19,22 +21,137 @@ import (
 
 // Adapter implements domain.GitHubWorkspaceAdapter.
 type Adapter struct {
-	token string
+	token           string            // retained for backward compatibility (first token)
+	tokens          []string          // split from comma-separated token string
+	tokenCache      map[string]string // owner → resolved token (lazy, populated by tokenFor)
+	mu              sync.RWMutex      // protects tokenCache
+	probeHTTPClient *http.Client      // optional, used by tokenFor probe (for testing)
 }
 
-// New creates a new Adapter. If token is empty, the GITHUB_TOKEN environment
-// variable is used as a fallback.
+// New creates a new Adapter. token is split on "," to build the token list.
+// Falls back to GITHUB_TOKEN env var when the list is empty.
 func New(token string) *Adapter {
-	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
+	tokens := splitTokens(token)
+	if len(tokens) == 0 {
+		if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+			tokens = []string{t}
+		}
 	}
-	return &Adapter{token: token}
+	var first string
+	if len(tokens) > 0 {
+		first = tokens[0]
+	}
+	return &Adapter{
+		token:      first,
+		tokens:     tokens,
+		tokenCache: make(map[string]string),
+	}
+}
+
+// splitTokens splits a comma-separated token string into a slice of non-empty,
+// whitespace-trimmed tokens.
+func splitTokens(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 // Ensure Adapter satisfies the interface at compile time.
 var _ domain.GitHubWorkspaceAdapter = (*Adapter)(nil)
 
 const workspaceYAMLPath = "workspace.yaml"
+
+// tokenFor resolves a token for the given GitHub owner. On cache hit it returns
+// immediately. On cache miss it probes each token in order by making a
+// lightweight GET request to /repos/{owner}/{repo}. The first token that does
+// not return 401/403 is cached for the owner and returned. If all tokens fail,
+// returns a SourceError with ErrGitHubUnauthorized.
+func (a *Adapter) tokenFor(ctx context.Context, owner, repo string) (string, error) {
+	// Fast path: cache hit with read lock.
+	a.mu.RLock()
+	if t, ok := a.tokenCache[owner]; ok {
+		a.mu.RUnlock()
+		return t, nil
+	}
+	a.mu.RUnlock()
+
+	// Cache miss — probe tokens in order under write lock.
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Double-check after acquiring write lock.
+	if t, ok := a.tokenCache[owner]; ok {
+		return t, nil
+	}
+
+	for _, t := range a.tokens {
+		if t == "" {
+			continue
+		}
+		valid, err := a.probeToken(ctx, t, owner, repo)
+		if err != nil {
+			return "", err
+		}
+		if valid {
+			a.tokenCache[owner] = t
+			return t, nil
+		}
+	}
+
+	return "", domain.SourceError{
+		Code:      domain.ErrGitHubUnauthorized,
+		Message:   fmt.Sprintf("no valid GitHub token found for owner %q", owner),
+		Source:    domain.ErrorSourceGitHub,
+		Retryable: false,
+	}
+}
+
+// probeToken makes a lightweight GET to /repos/{owner}/{repo} to check whether
+// the given token can successfully authenticate for the given owner.
+// Returns true if the token is valid (any response that is not 401/403).
+func (a *Adapter) probeToken(ctx context.Context, token, owner, repo string) (bool, error) {
+	u := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return false, nil // transient error, try next token
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	hc := a.probeHTTPClient
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return false, nil // network error, try next token
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	// Detect rate limiting first — it's a real error, not a token validity signal.
+	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		return false, domain.NewGitHubRateLimitError("")
+	}
+
+	// 401/403 means the token does not work for this owner.
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return false, nil // try next token
+	}
+
+	// Any other status (2xx, 404, etc.) means the token is valid for this owner.
+	return true, nil
+}
 
 type repoTarget struct {
 	client *client
@@ -43,7 +160,7 @@ type repoTarget struct {
 	ref    string
 }
 
-func (a *Adapter) repoTarget(input domain.ImportInput) (*repoTarget, error) {
+func (a *Adapter) repoTarget(ctx context.Context, input domain.ImportInput) (*repoTarget, error) {
 	if err := validateInput(input); err != nil {
 		return nil, *err
 	}
@@ -60,7 +177,11 @@ func (a *Adapter) repoTarget(input domain.ImportInput) (*repoTarget, error) {
 
 	token := input.Token
 	if token == "" {
-		token = a.token
+		var tokErr error
+		token, tokErr = a.tokenFor(ctx, owner, repo)
+		if tokErr != nil {
+			return nil, tokErr
+		}
 	}
 
 	return &repoTarget{
@@ -73,7 +194,7 @@ func (a *Adapter) repoTarget(input domain.ImportInput) (*repoTarget, error) {
 
 // ImportWorkspace performs a full reconciliation import of the given repository.
 func (a *Adapter) ImportWorkspace(ctx context.Context, input domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
-	target, err := a.repoTarget(input)
+	target, err := a.repoTarget(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +203,7 @@ func (a *Adapter) ImportWorkspace(ctx context.Context, input domain.ImportInput)
 
 // FetchWorkspaceMetadata validates the repository and reads only workspace.yaml.
 func (a *Adapter) FetchWorkspaceMetadata(ctx context.Context, input domain.ImportInput) (*domain.WorkspaceSnapshot, error) {
-	target, err := a.repoTarget(input)
+	target, err := a.repoTarget(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +251,11 @@ func (a *Adapter) FetchFeature(ctx context.Context, repoURL, ref, featureID stri
 	if err != nil {
 		return nil, *err
 	}
-	c := newClient(a.token)
+	token, tokErr := a.tokenFor(ctx, owner, repo)
+	if tokErr != nil {
+		return nil, tokErr
+	}
+	c := newClient(token)
 
 	// Resolve commit SHA.
 	commitSHA, ferr := c.getCommitSHA(ctx, owner, repo, ref)
@@ -167,7 +292,11 @@ func (a *Adapter) FetchTask(ctx context.Context, repoURL, taskBranch, featureID,
 	if err != nil {
 		return nil, *err
 	}
-	c := newClient(a.token)
+	token, tokErr := a.tokenFor(ctx, owner, repo)
+	if tokErr != nil {
+		return nil, tokErr
+	}
+	c := newClient(token)
 
 	taskPath := "docs/features/" + featureID + "/tasks/" + taskID + ".yaml"
 	data, ferr := c.getFileContent(ctx, owner, repo, taskPath, taskBranch)
@@ -207,7 +336,12 @@ func (a *Adapter) SyncWorkspace(ctx context.Context, workspaceID, repoURL, ref s
 		return nil, *err
 	}
 
-	c := newClient(a.token)
+	token, tokErr := a.tokenFor(ctx, owner, repo)
+	if tokErr != nil {
+		return nil, tokErr
+	}
+
+	c := newClient(token)
 	snap, fetchErr := a.fetchSnapshot(ctx, c, owner, repo, ref, workspaceID)
 	if fetchErr != nil {
 		return nil, fetchErr
