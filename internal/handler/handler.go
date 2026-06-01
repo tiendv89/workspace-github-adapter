@@ -18,6 +18,7 @@ type ServiceHandler struct {
 	DB            domain.DbWorkspaceAdapter
 	Q             *database.Queries
 	Pool          *pgxpool.Pool
+	UserPool      *pgxpool.Pool
 	GitHub        domain.GitHubWorkspaceAdapter
 	Queue         TaskEnqueuer
 	WebhookSecret string
