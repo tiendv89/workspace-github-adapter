@@ -50,7 +50,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("pgxpool.New: %w", err)
 	}
 	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
+	if err = pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping db: %w", err)
 	}
 
