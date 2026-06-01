@@ -597,6 +597,7 @@ type workspaceRow struct {
 func (r workspaceRow) Scan(dest ...any) error {
 	values := []any{
 		r.workspaceID,
+		pgtype.UUID{}, // organization_id
 		"workspace",
 		"Workspace",
 		"management-repo",

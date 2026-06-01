@@ -42,6 +42,7 @@ const (
 
 	// Validation errors.
 	ErrValidationInvalidURL   ErrorCode = "VALIDATION_INVALID_URL"
+	ErrValidationInvalidInput ErrorCode = "VALIDATION_INVALID_INPUT"
 	ErrValidationMissingInput ErrorCode = "VALIDATION_MISSING_INPUT"
 )
 

@@ -24,18 +24,20 @@ import (
 )
 
 type importWorkspaceRequest struct {
-	RepoURL       string `json:"repo_url"`
-	DefaultBranch string `json:"default_branch,omitempty"`
-	Name          string `json:"name,omitempty"`
+	RepoURL        string `json:"repo_url"`
+	DefaultBranch  string `json:"default_branch,omitempty"`
+	Name           string `json:"name,omitempty"`
+	OrganizationID string `json:"organization_id"`
 }
 
 type importWorkspaceResponse struct {
-	Status        string `json:"status,omitempty"`
-	WorkspaceID   string `json:"workspace_id"`
-	Name          string `json:"name,omitempty"`
-	Slug          string `json:"slug,omitempty"`
-	RepoURL       string `json:"repo_url"`
-	DefaultBranch string `json:"default_branch"`
+	Status         string `json:"status,omitempty"`
+	WorkspaceID    string `json:"workspace_id"`
+	Name           string `json:"name,omitempty"`
+	Slug           string `json:"slug,omitempty"`
+	RepoURL        string `json:"repo_url"`
+	DefaultBranch  string `json:"default_branch"`
+	OrganizationID string `json:"organization_id,omitempty"`
 }
 
 // ImportWorkspaceHandler handles POST /internal/workspaces/import.
@@ -47,6 +49,19 @@ func (h *ServiceHandler) ImportWorkspaceHandler(c *gin.Context) {
 	}
 	if strings.TrimSpace(req.RepoURL) == "" {
 		httputil.WriteSourceError(c, domain.NewValidationError(domain.ErrValidationMissingInput, "repo_url is required"))
+		return
+	}
+	if strings.TrimSpace(req.OrganizationID) == "" {
+		httputil.WriteSourceError(c, domain.NewValidationError(domain.ErrValidationMissingInput, "organization_id is required"))
+		return
+	}
+	orgUUID, err := uuid.Parse(req.OrganizationID)
+	if err != nil {
+		httputil.WriteSourceError(c, domain.NewValidationError(domain.ErrValidationInvalidInput, "organization_id must be a UUID"))
+		return
+	}
+	if orgUUID == uuid.Nil {
+		httputil.WriteSourceError(c, domain.NewValidationError(domain.ErrValidationInvalidInput, "organization_id must not be the zero UUID"))
 		return
 	}
 	if req.DefaultBranch == "" {
@@ -90,7 +105,7 @@ func (h *ServiceHandler) ImportWorkspaceHandler(c *gin.Context) {
 		slug = workspaceID
 	}
 
-	workspaceID, err = h.createImportPlaceholder(c.Request.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch, snap.ManagementRepoID)
+	workspaceID, err = h.createImportPlaceholder(c.Request.Context(), workspaceID, name, slug, req.RepoURL, req.DefaultBranch, snap.ManagementRepoID, req.OrganizationID)
 	if err != nil {
 		if !pgutil2.IsUniqueViolation(err) {
 			httputil.WriteAnyError(c, err)
@@ -139,10 +154,11 @@ func (h *ServiceHandler) ImportWorkspaceHandler(c *gin.Context) {
 		}
 		if pgutil2.IsDedupeError(err) {
 			httputil.WriteOK(c, http.StatusAccepted, map[string]string{
-				"status":       "already_queued",
-				"workspace_id": workspaceID,
-				"sync_run_id":  syncRunID,
-				"type":         queue.TypeWorkspaceSync,
+				"status":          "already_queued",
+				"workspace_id":    workspaceID,
+				"sync_run_id":     syncRunID,
+				"type":            queue.TypeWorkspaceSync,
+				"organization_id": req.OrganizationID,
 			})
 			return
 		}
@@ -151,15 +167,16 @@ func (h *ServiceHandler) ImportWorkspaceHandler(c *gin.Context) {
 	}
 
 	httputil.WriteOK(c, http.StatusAccepted, map[string]string{
-		"workspace_id":   workspaceID,
-		"name":           name,
-		"slug":           slug,
-		"repo_url":       req.RepoURL,
-		"default_branch": req.DefaultBranch,
-		"sync_run_id":    syncRunID,
-		"task_id":        info.ID,
-		"queue":          info.Queue,
-		"type":           info.Type,
+		"workspace_id":    workspaceID,
+		"name":            name,
+		"slug":            slug,
+		"repo_url":        req.RepoURL,
+		"default_branch":  req.DefaultBranch,
+		"sync_run_id":     syncRunID,
+		"task_id":         info.ID,
+		"queue":           info.Queue,
+		"type":            info.Type,
+		"organization_id": req.OrganizationID,
 	})
 }
 
@@ -181,13 +198,17 @@ func (h *ServiceHandler) findExistingImport(ctx context.Context, owner, repo str
 	return ws, true, nil
 }
 
-func (h *ServiceHandler) createImportPlaceholder(ctx context.Context, workspaceID, name, slug, repoURL, defaultBranch, managementRepoID string) (string, error) {
+func (h *ServiceHandler) createImportPlaceholder(ctx context.Context, workspaceID, name, slug, repoURL, defaultBranch, managementRepoID, organizationID string) (string, error) {
 	uid, err := pgutil2.PgUUID(workspaceID)
 	if err != nil {
 		return "", err
 	}
+	orgUID, err := pgutil2.PgUUID(organizationID)
+	if err != nil {
+		return "", fmt.Errorf("parse organization_id: %w", err)
+	}
 	if h.Pool == nil {
-		return h.createImportPlaceholderWithQueries(ctx, h.Q, uid, name, slug, repoURL, defaultBranch, managementRepoID)
+		return h.createImportPlaceholderWithQueries(ctx, h.Q, uid, name, slug, repoURL, defaultBranch, managementRepoID, orgUID)
 	}
 
 	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{})
@@ -196,7 +217,7 @@ func (h *ServiceHandler) createImportPlaceholder(ctx context.Context, workspaceI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	actualWorkspaceID, err := h.createImportPlaceholderWithQueries(ctx, h.Q.WithTx(tx), uid, name, slug, repoURL, defaultBranch, managementRepoID)
+	actualWorkspaceID, err := h.createImportPlaceholderWithQueries(ctx, h.Q.WithTx(tx), uid, name, slug, repoURL, defaultBranch, managementRepoID, orgUID)
 	if err != nil {
 		return "", err
 	}
@@ -206,9 +227,10 @@ func (h *ServiceHandler) createImportPlaceholder(ctx context.Context, workspaceI
 	return actualWorkspaceID, nil
 }
 
-func (h *ServiceHandler) createImportPlaceholderWithQueries(ctx context.Context, q *database.Queries, uid pgtype.UUID, name, slug, repoURL, defaultBranch, managementRepoID string) (string, error) {
+func (h *ServiceHandler) createImportPlaceholderWithQueries(ctx context.Context, q *database.Queries, uid pgtype.UUID, name, slug, repoURL, defaultBranch, managementRepoID string, orgUID pgtype.UUID) (string, error) {
 	ws, err := q.UpsertWorkspaceByID(ctx, database.UpsertWorkspaceByIDParams{
 		ID:               uid,
+		OrganizationID:   orgUID,
 		Slug:             slug,
 		Name:             name,
 		ManagementRepoID: managementRepoID,
@@ -279,11 +301,12 @@ func (h *ServiceHandler) markRunFailed(ctx context.Context, runID pgtype.UUID, c
 
 func writeExistingImport(c *gin.Context, existing database.Workspace, repoURL, defaultBranch string) {
 	httputil.WriteOK(c, http.StatusOK, importWorkspaceResponse{
-		Status:        "exists",
-		WorkspaceID:   pgutil2.UUIDString(existing.ID),
-		Name:          existing.Name,
-		Slug:          existing.Slug,
-		RepoURL:       repoURL,
-		DefaultBranch: defaultBranch,
+		Status:         "exists",
+		WorkspaceID:    pgutil2.UUIDString(existing.ID),
+		Name:           existing.Name,
+		Slug:           existing.Slug,
+		RepoURL:        repoURL,
+		DefaultBranch:  defaultBranch,
+		OrganizationID: pgutil2.UUIDString(existing.OrganizationID),
 	})
 }

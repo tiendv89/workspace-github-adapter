@@ -300,7 +300,8 @@ func TestImportWorkspaceHandler_GitHubNotFoundDoesNotPersistPlaceholder(t *testi
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
 		"repo_url":"https://github.com/acme/missing",
-		"default_branch":"main"
+		"default_branch":"main",
+		"organization_id":"11111111-1111-1111-1111-111111111111"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -341,7 +342,8 @@ func TestImportWorkspaceHandler_DifferentRepoWithExistingSlugReturnsConflict(t *
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/workspaces/import", strings.NewReader(`{
 		"repo_url":"https://github.com/Kadamato/test_workspace.git",
 		"default_branch":"main",
-		"name":"Project Workspace"
+		"name":"Project Workspace",
+		"organization_id":"11111111-1111-1111-1111-111111111111"
 	}`))
 	rec := httptest.NewRecorder()
 
@@ -636,6 +638,7 @@ type webhookWorkspaceRow struct {
 func (r webhookWorkspaceRow) Scan(dest ...any) error {
 	values := []any{
 		r.workspace.ID,
+		r.workspace.OrganizationID,
 		r.workspace.Slug,
 		r.workspace.Name,
 		r.workspace.ManagementRepoID,
