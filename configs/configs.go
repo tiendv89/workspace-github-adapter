@@ -15,6 +15,7 @@ type Config struct {
 	Log    LogConfig    `mapstructure:"log"`
 	API    APIConfig    `mapstructure:"api"`
 	DB     DBConfig     `mapstructure:"db"`
+	UserDB DBConfig     `mapstructure:"user_db"`
 	Redis  RedisConfig  `mapstructure:"redis"`
 	GitHub GitHubConfig `mapstructure:"github"`
 	Sync   SyncConfig   `mapstructure:"sync"`

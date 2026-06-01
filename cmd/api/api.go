@@ -50,8 +50,22 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("pgxpool.New: %w", err)
 	}
 	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
+	if err = pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping db: %w", err)
+	}
+
+	var userPool *pgxpool.Pool
+	if cfg.UserDB.Host != "" {
+		userPool, err = pgxpool.New(ctx, cfg.UserDB.DSN())
+		if err != nil {
+			return fmt.Errorf("pgxpool.New (user_db): %w", err)
+		}
+		defer userPool.Close()
+		if err := userPool.Ping(ctx); err != nil {
+			return fmt.Errorf("ping user_db: %w", err)
+		}
+	} else {
+		log.Warn().Msg("user_db not configured — organization slug lookups will fail")
 	}
 
 	ghAdapter := ghadapter.New(cfg.GitHub.Token)
@@ -71,6 +85,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		DB:            dbadapter.New(pool),
 		Q:             database.New(pool),
 		Pool:          pool,
+		UserPool:      userPool,
 		GitHub:        ghAdapter,
 		Queue:         client,
 		WebhookSecret: cfg.GitHub.WebhookSecret,

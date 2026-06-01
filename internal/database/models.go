@@ -10,6 +10,7 @@ import (
 
 type Workspace struct {
 	ID               pgtype.UUID        `db:"id" json:"id"`
+	OrganizationID   pgtype.UUID        `db:"organization_id" json:"organization_id"`
 	Slug             string             `db:"slug" json:"slug"`
 	Name             string             `db:"name" json:"name"`
 	ManagementRepoID string             `db:"management_repo_id" json:"management_repo_id"`
