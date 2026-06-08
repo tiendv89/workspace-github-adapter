@@ -49,3 +49,8 @@ func UUIDFromString(s string) pgtype.UUID {
 func RawJSON(s string) json.RawMessage {
 	return json.RawMessage(s)
 }
+
+// ExportedUpsertFeatureSnapshot exposes upsertFeatureSnapshot for unit testing.
+func ExportedUpsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, f domain.FeatureSnapshot) error {
+	return upsertFeatureSnapshot(ctx, q, uid, f)
+}

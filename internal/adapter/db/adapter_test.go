@@ -429,3 +429,230 @@ func (r workspaceUpdateRow) Scan(dest ...any) error {
 	*d8 = pgtype.Timestamptz{}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// Owner-protection tests — verify that go-owned rows are never deleted or
+// overwritten by the YAML→DB sync adapter.
+// ---------------------------------------------------------------------------
+
+// sqlCapturingDB records every SQL string passed through Exec and QueryRow.
+type sqlCapturingDB struct {
+	execQueries     []string
+	queryRowQueries []string
+	featureID       pgtype.UUID
+}
+
+func (c *sqlCapturingDB) Exec(_ context.Context, sql string, _ ...interface{}) (pgconn.CommandTag, error) {
+	c.execQueries = append(c.execQueries, sql)
+	return pgconn.CommandTag{}, nil
+}
+
+func (c *sqlCapturingDB) Query(_ context.Context, _ string, _ ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c *sqlCapturingDB) QueryRow(_ context.Context, sql string, _ ...interface{}) pgx.Row {
+	c.queryRowQueries = append(c.queryRowQueries, sql)
+	return &capturedRow{sql: sql, featureID: c.featureID}
+}
+
+// capturedRow fakes RETURNING rows for any QueryRow call.
+// It detects the query type by its SQL content and fills dest accordingly.
+type capturedRow struct {
+	sql       string
+	featureID pgtype.UUID
+}
+
+func (r *capturedRow) Scan(dest ...any) error {
+	switch {
+	case strings.Contains(r.sql, "INSERT INTO workspace_features"):
+		// UpsertWorkspaceFeature: id, workspace_id, feature_id, feature_name,
+		// title, feature_status, current_stage, next_action, stages, source_path,
+		// source_hash, created_at, updated_at (13 fields).
+		if len(dest) < 3 {
+			return fmt.Errorf("capturedRow(feature): expected ≥3 dest, got %d", len(dest))
+		}
+		if d, ok := dest[0].(*pgtype.UUID); ok {
+			*d = r.featureID
+		}
+		if d, ok := dest[1].(*pgtype.UUID); ok {
+			*d = r.featureID
+		}
+		if d, ok := dest[2].(*pgtype.UUID); ok {
+			*d = r.featureID
+		}
+		if len(dest) > 3 {
+			if d, ok := dest[3].(*string); ok {
+				*d = "test-feature"
+			}
+		}
+		if len(dest) > 4 {
+			if d, ok := dest[4].(*string); ok {
+				*d = "Test Feature"
+			}
+		}
+	case strings.Contains(r.sql, "UPDATE workspaces"):
+		// UpdateWorkspaceByID: 9 fields.
+		if len(dest) != 9 {
+			return fmt.Errorf("capturedRow(workspace): expected 9 dest, got %d", len(dest))
+		}
+		if d, ok := dest[0].(*pgtype.UUID); ok {
+			*d = r.featureID // reuse as workspace UUID
+		}
+		if d, ok := dest[1].(*pgtype.UUID); ok {
+			*d = pgtype.UUID{}
+		}
+		if d, ok := dest[2].(*string); ok {
+			*d = "ws"
+		}
+		if d, ok := dest[3].(*string); ok {
+			*d = "ws"
+		}
+		if d, ok := dest[4].(*string); ok {
+			*d = "management-repo"
+		}
+	case strings.Contains(r.sql, "INSERT INTO workspace_tasks"):
+		// UpsertWorkspaceTask: 19 fields.
+		if len(dest) < 3 {
+			return fmt.Errorf("capturedRow(task): expected ≥3 dest, got %d", len(dest))
+		}
+		if d, ok := dest[0].(*pgtype.UUID); ok {
+			*d = r.featureID
+		}
+		if d, ok := dest[1].(*pgtype.UUID); ok {
+			*d = r.featureID
+		}
+		if d, ok := dest[2].(*pgtype.UUID); ok {
+			*d = r.featureID
+		}
+		if len(dest) > 3 {
+			if d, ok := dest[3].(*string); ok {
+				*d = "test-feature"
+			}
+		}
+		if len(dest) > 4 {
+			if d, ok := dest[4].(*pgtype.UUID); ok {
+				*d = r.featureID
+			}
+		}
+		if len(dest) > 5 {
+			if d, ok := dest[5].(*string); ok {
+				*d = "T1"
+			}
+		}
+		if len(dest) > 6 {
+			if d, ok := dest[6].(*string); ok {
+				*d = "Task"
+			}
+		}
+	case strings.Contains(r.sql, "workspace_repos"):
+		// UpsertWorkspaceRepo: just needs a UUID scan.
+		if len(dest) > 0 {
+			if d, ok := dest[0].(*pgtype.UUID); ok {
+				*d = r.featureID
+			}
+		}
+	}
+	return nil
+}
+
+// TestOwnerFilter_DeleteFeaturesSQL verifies the SQL sent to the database for
+// DeleteWorkspaceFeaturesNotIn includes the owner IS NULL filter.
+func TestOwnerFilter_DeleteFeaturesSQL(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	fake := &sqlCapturingDB{featureID: featureID}
+	q := database.New(fake)
+
+	err := db.ExportedUpsertSnapshot(context.Background(), q, db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000"), &domain.WorkspaceSnapshot{
+		Name: "ws",
+		Slug: "ws",
+		Features: []domain.FeatureSnapshot{
+			{
+				FeatureID:  "test-feature",
+				Title:      "Test Feature",
+				SourcePath: "docs/features/test-feature/status.yaml",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("upsertSnapshot: %v", err)
+	}
+
+	const ownerFilter = "owner IS NULL OR owner = ''"
+	var found bool
+	for _, sql := range fake.execQueries {
+		if strings.Contains(sql, "DELETE FROM workspace_features") {
+			if !strings.Contains(sql, ownerFilter) {
+				t.Errorf("DeleteWorkspaceFeaturesNotIn SQL missing owner filter %q;\ngot: %s", ownerFilter, sql)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no DELETE FROM workspace_features SQL captured — check test setup")
+	}
+}
+
+// TestOwnerFilter_DeleteTasksSQL verifies the SQL for DeleteFeatureTasksNotIn
+// includes the owner IS NULL filter.
+func TestOwnerFilter_DeleteTasksSQL(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	fake := &sqlCapturingDB{featureID: featureID}
+	q := database.New(fake)
+
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID:  "test-feature",
+		Title:      "Test Feature",
+		SourcePath: "docs/features/test-feature/status.yaml",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	const ownerFilter = "owner IS NULL OR owner = ''"
+	var found bool
+	for _, sql := range fake.execQueries {
+		if strings.Contains(sql, "DELETE FROM workspace_tasks") {
+			if !strings.Contains(sql, ownerFilter) {
+				t.Errorf("DeleteFeatureTasksNotIn SQL missing owner filter %q;\ngot: %s", ownerFilter, sql)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no DELETE FROM workspace_tasks SQL captured — check test setup")
+	}
+}
+
+// TestOwnerFilter_UpsertFeatureSQL verifies the upsert SQL uses COALESCE to
+// preserve existing non-null owner values (e.g. 'go').
+func TestOwnerFilter_UpsertFeatureSQL(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	fake := &sqlCapturingDB{featureID: featureID}
+	q := database.New(fake)
+
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID:  "test-feature",
+		Title:      "Test Feature",
+		SourcePath: "docs/features/test-feature/status.yaml",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	const coalesceExpr = "COALESCE(workspace_features.owner, EXCLUDED.owner)"
+	var found bool
+	for _, sql := range fake.queryRowQueries {
+		if strings.Contains(sql, "INSERT INTO workspace_features") {
+			if !strings.Contains(sql, coalesceExpr) {
+				t.Errorf("UpsertWorkspaceFeature SQL missing owner COALESCE %q;\ngot: %s", coalesceExpr, sql)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no INSERT INTO workspace_features SQL captured — check test setup")
+	}
+}

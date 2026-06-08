@@ -48,6 +48,7 @@ ON CONFLICT (workspace_id, feature_id, task_name) DO UPDATE SET
     workspace_pr   = EXCLUDED.workspace_pr,
     source_path    = EXCLUDED.source_path,
     source_hash    = EXCLUDED.source_hash,
+    owner          = COALESCE(workspace_tasks.owner, EXCLUDED.owner),
     updated_at     = now()
 RETURNING id, workspace_id, feature_id, feature_name, task_id, task_name, title, repo, status, depends_on,
           blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
@@ -57,8 +58,10 @@ RETURNING id, workspace_id, feature_id, feature_name, task_id, task_name, title,
 DELETE FROM workspace_tasks
 WHERE workspace_id = $1
   AND feature_id = $2
-  AND task_name != ALL($3::text[]);
+  AND task_name != ALL($3::text[])
+  AND (owner IS NULL OR owner = '');
 
 -- name: DeleteAllFeatureTasks :exec
 DELETE FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id = $2;
+WHERE workspace_id = $1 AND feature_id = $2
+  AND (owner IS NULL OR owner = '');
