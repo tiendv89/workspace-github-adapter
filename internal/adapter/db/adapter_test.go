@@ -625,6 +625,69 @@ func TestOwnerFilter_DeleteTasksSQL(t *testing.T) {
 	}
 }
 
+// statefulOwnerDB extends sqlCapturingDB to maintain an in-memory feature-owner
+// map. When Exec receives a DELETE FROM workspace_features, it applies the same
+// owner IS NULL filter the real database would, letting tests assert that
+// go-owned rows survive a sync cycle without a live database.
+type statefulOwnerDB struct {
+	sqlCapturingDB
+	// featureOwners maps feature_name → owner ("" = NULL / legacy, "go" = go-owned).
+	featureOwners map[string]string
+}
+
+func (s *statefulOwnerDB) Exec(_ context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+	s.execQueries = append(s.execQueries, sql)
+	if strings.Contains(sql, "DELETE FROM workspace_features") && len(args) >= 2 {
+		keepNames, _ := args[1].([]string)
+		keepSet := make(map[string]bool, len(keepNames))
+		for _, n := range keepNames {
+			keepSet[n] = true
+		}
+		for name, owner := range s.featureOwners {
+			if !keepSet[name] && owner == "" {
+				delete(s.featureOwners, name)
+			}
+		}
+	}
+	return pgconn.CommandTag{}, nil
+}
+
+// TestGoOwnedFeatureSurvivesSync seeds a go-owned feature and a stale legacy
+// feature in the mock "database", then runs a full sync cycle that omits both.
+// Asserts:
+//   - go-owned-feature survives — owner='go' is excluded by the AND (owner IS NULL
+//     OR owner = '') filter in DeleteWorkspaceFeaturesNotIn.
+//   - stale-legacy is purged — owner IS NULL makes it eligible for deletion.
+func TestGoOwnedFeatureSurvivesSync(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	mock := &statefulOwnerDB{
+		sqlCapturingDB: sqlCapturingDB{featureID: featureID},
+		featureOwners: map[string]string{
+			"go-owned-feature": "go", // seeded by Go orchestrator — must survive
+			"stale-legacy":     "",   // legacy row absent from YAML — must be purged
+		},
+	}
+	q := database.New(mock)
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+	// Sync a workspace with no features — both seeded rows are absent from the
+	// YAML snapshot, so the delete runs with an empty keep-list.
+	err := db.ExportedUpsertSnapshot(context.Background(), q, workspaceID, &domain.WorkspaceSnapshot{
+		Name: "ws",
+		Slug: "ws",
+	})
+	if err != nil {
+		t.Fatalf("upsertSnapshot: %v", err)
+	}
+
+	if _, exists := mock.featureOwners["go-owned-feature"]; !exists {
+		t.Error("go-owned-feature was deleted — owner IS NULL filter did not protect go-owned rows")
+	}
+	if _, exists := mock.featureOwners["stale-legacy"]; exists {
+		t.Error("stale-legacy (NULL owner) should have been purged but was retained")
+	}
+}
+
 // TestOwnerFilter_UpsertFeatureSQL verifies the upsert SQL uses COALESCE to
 // preserve existing non-null owner values (e.g. 'go').
 func TestOwnerFilter_UpsertFeatureSQL(t *testing.T) {
