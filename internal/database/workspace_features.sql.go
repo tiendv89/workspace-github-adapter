@@ -103,6 +103,7 @@ ON CONFLICT (workspace_id, feature_name) DO UPDATE SET
     stages         = EXCLUDED.stages,
     source_path    = EXCLUDED.source_path,
     source_hash    = EXCLUDED.source_hash,
+    owner          = COALESCE(workspace_features.owner, EXCLUDED.owner),
     updated_at     = now()
 RETURNING id, workspace_id, feature_id, feature_name, title, feature_status, current_stage, next_action,
           stages, source_path, source_hash, created_at, updated_at`
@@ -153,7 +154,8 @@ func (q *Queries) UpsertWorkspaceFeature(ctx context.Context, arg UpsertWorkspac
 const deleteWorkspaceFeaturesNotIn = `-- name: DeleteWorkspaceFeaturesNotIn :exec
 DELETE FROM workspace_features
 WHERE workspace_id = $1
-  AND feature_name != ALL($2::text[])`
+  AND feature_name != ALL($2::text[])
+  AND (owner IS NULL OR owner = '')`
 
 type DeleteWorkspaceFeaturesNotInParams struct {
 	WorkspaceID  pgtype.UUID
