@@ -1,24 +1,21 @@
-# Vendor stage
-FROM golang:1.25.8 AS dep
+# Build stage
+FROM --platform=$BUILDPLATFORM golang:1.25.8 AS build
 WORKDIR /build
-COPY go.mod go.sum ./
-RUN GO111MODULE=on go mod download
-COPY . .
-RUN go mod vendor
 
-# Build binary stage
-FROM golang:1.25.8 AS build
-WORKDIR /build
-COPY --from=dep /build .
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o server -tags nethttpomithttp2 ./cmd
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+COPY . .
+ARG TARGETOS TARGETARCH
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags="-s -w" -tags nethttpomithttp2 -o server ./cmd
 
 # Minimal image
 FROM alpine:latest
 WORKDIR /app
+RUN apk add --no-cache ca-certificates tzdata
 COPY configs/config.yaml configs/config.yaml
 COPY --from=build /build/server server
-RUN apk update
-RUN apk upgrade
-RUN apk add ca-certificates
-RUN apk --no-cache add tzdata
 CMD ["./server"]
