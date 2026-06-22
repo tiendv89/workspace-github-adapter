@@ -656,7 +656,7 @@ func (s *statefulOwnerDB) Exec(_ context.Context, sql string, args ...interface{
 // feature in the mock "database", then runs a full sync cycle that omits both.
 // Asserts:
 //   - go-owned-feature survives — owner='go' is excluded by the AND (owner IS NULL
-//     OR owner = '') filter in DeleteWorkspaceFeaturesNotIn.
+//     OR owner = ”) filter in DeleteWorkspaceFeaturesNotIn.
 //   - stale-legacy is purged — owner IS NULL makes it eligible for deletion.
 func TestGoOwnedFeatureSurvivesSync(t *testing.T) {
 	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
