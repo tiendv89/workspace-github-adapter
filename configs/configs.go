@@ -15,7 +15,6 @@ type Config struct {
 	Log    LogConfig    `mapstructure:"log"`
 	API    APIConfig    `mapstructure:"api"`
 	DB     DBConfig     `mapstructure:"db"`
-	UserDB DBConfig     `mapstructure:"user_db"`
 	Redis  RedisConfig  `mapstructure:"redis"`
 	GitHub GitHubConfig `mapstructure:"github"`
 	Sync   SyncConfig   `mapstructure:"sync"`
@@ -44,8 +43,6 @@ type DBConfig struct {
 	MaxIdleConns        int    `mapstructure:"max_idle_conns"`
 	MaxOpenConns        int    `mapstructure:"max_open_conns"`
 	LogLevel            int    `mapstructure:"log_level"`
-	AutoMigration       bool   `mapstructure:"auto_migration"`
-	MigrationDir        string `mapstructure:"migration_dir"`
 }
 
 func (c *DBConfig) DSN() string {

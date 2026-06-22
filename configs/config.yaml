@@ -16,20 +16,6 @@ db:
   max_idle_conns: 10
   max_open_conns: 30
   log_level: 1
-  auto_migration: false
-  migration_dir: "file://migrations"
-
-# Read-only connection to user-service db. Used to resolve organizations
-# (e.g. look up the default org by slug when imports don't supply one).
-user_db:
-  host: 127.0.0.1
-  port: 25433
-  db_name: user_db
-  user: user_service
-  password: user_service
-  conn_life_time_seconds: 300
-  max_idle_conns: 2
-  max_open_conns: 5
 
 redis:
   init_address:

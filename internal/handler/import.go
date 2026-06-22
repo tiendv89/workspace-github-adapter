@@ -52,12 +52,8 @@ func (h *ServiceHandler) ImportWorkspaceHandler(c *gin.Context) {
 		return
 	}
 	if strings.TrimSpace(req.OrganizationID) == "" {
-		defaultOrgID, lookupErr := h.lookupOrganizationIDBySlug(c.Request.Context(), "kitelabs")
-		if lookupErr != nil {
-			httputil.WriteAnyError(c, fmt.Errorf("resolve default organization (slug=kitelabs): %w", lookupErr))
-			return
-		}
-		req.OrganizationID = defaultOrgID
+		httputil.WriteSourceError(c, domain.NewValidationError(domain.ErrValidationMissingInput, "organization_id is required"))
+		return
 	}
 	orgUUID, err := uuid.Parse(req.OrganizationID)
 	if err != nil {
@@ -301,20 +297,6 @@ func (h *ServiceHandler) markRunFailed(ctx context.Context, runID pgtype.UUID, c
 		return fmt.Errorf("update sync run failed: %w", err)
 	}
 	return nil
-}
-
-func (h *ServiceHandler) lookupOrganizationIDBySlug(ctx context.Context, slug string) (string, error) {
-	if h.UserPool == nil {
-		return "", fmt.Errorf("user_db pool unavailable")
-	}
-	var id pgtype.UUID
-	if err := h.UserPool.QueryRow(ctx, `SELECT id FROM organizations WHERE slug = $1`, slug).Scan(&id); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", fmt.Errorf("organization with slug %q not found", slug)
-		}
-		return "", fmt.Errorf("query organization by slug: %w", err)
-	}
-	return pgutil2.UUIDString(id), nil
 }
 
 func writeExistingImport(c *gin.Context, existing database.Workspace, repoURL, defaultBranch string) {
