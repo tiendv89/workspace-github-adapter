@@ -370,6 +370,15 @@ func (h *Handler) recordFailedRun(ctx context.Context, payload queue.WorkspaceSy
 		code = string(sourceErr.Code)
 		message = sourceErr.Message
 	}
+
+	log.Error().
+		Err(syncErr).
+		Str("workspace_id", payload.WorkspaceID).
+		Str("feature_id", payload.FeatureID).
+		Str("ref", branch).
+		Str("mode", mode).
+		Str("code", code).
+		Msg("workspace sync failed")
 	runID, err := h.ensureSyncRun(ctx, payload, trigger, mode, branch, nil, false)
 	if err != nil {
 		log.Error().Err(err).Str("workspace_id", payload.WorkspaceID).AnErr("original_error", syncErr).Msg("ensure failed sync run failed")

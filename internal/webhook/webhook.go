@@ -59,6 +59,12 @@ var featurePathRe = regexp.MustCompile(`^docs/features/([^/]+)/`)
 
 const defaultBranchPattern = "feature/{feature_id}-{work_id}"
 
+// initBranchSuffix marks a feature's init branch (feature/<slug>-init). The
+// suffix is a branch-naming convention only — the feature's docs dir
+// (docs/features/<slug>/) and indexed record use the bare slug — so it must be
+// stripped from a parsed feature_id.
+const initBranchSuffix = "-init"
+
 var workIDRe = regexp.MustCompile(`^T\d+$`)
 
 // VerifySignature checks the X-Hub-Signature-256 header against the request body.
@@ -149,7 +155,7 @@ func classifyByPattern(branch, pattern string, task bool) (BranchInfo, bool) {
 	for i, name := range names {
 		values[name] = matches[i+1]
 	}
-	info := BranchInfo{Branch: branch, FeatureID: values["feature_id"]}
+	info := BranchInfo{Branch: branch, FeatureID: normalizeFeatureID(values["feature_id"])}
 	if task {
 		info.Kind = BranchTask
 		info.TaskID = values["work_id"]
@@ -190,6 +196,14 @@ func branchPatternRegexp(pattern string) (*regexp.Regexp, []string, bool) {
 		return nil, nil, false
 	}
 	return regexp.MustCompile("^" + b.String() + "$"), names, true
+}
+
+// normalizeFeatureID strips the init-branch suffix so a push on
+// feature/<slug>-init maps to the same feature <slug> as the docs dir and the
+// indexed feature record. The branch name (ref) is preserved separately, so
+// the init branch is still the ref we fetch from.
+func normalizeFeatureID(id string) string {
+	return strings.TrimSuffix(id, initBranchSuffix)
 }
 
 func featurePatternFromTaskPattern(pattern string) string {

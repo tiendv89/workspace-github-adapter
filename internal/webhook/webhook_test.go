@@ -61,6 +61,19 @@ func TestClassifyBranch_Feature(t *testing.T) {
 	}
 }
 
+func TestClassifyBranch_InitBranchStripsSuffix(t *testing.T) {
+	info := webhook.ClassifyBranch("feature/workspace-data-backend-init", "main")
+	if info.Kind != webhook.BranchFeature {
+		t.Errorf("expected BranchFeature, got %v", info.Kind)
+	}
+	if info.FeatureID != "workspace-data-backend" {
+		t.Errorf("expected FeatureID=workspace-data-backend (init suffix stripped), got %q", info.FeatureID)
+	}
+	if info.Branch != "feature/workspace-data-backend-init" {
+		t.Errorf("expected Branch to keep the init branch name, got %q", info.Branch)
+	}
+}
+
 func TestClassifyBranch_Task(t *testing.T) {
 	info := webhook.ClassifyBranch("feature/workspace-data-backend-T7", "main")
 	if info.Kind != webhook.BranchTask {
