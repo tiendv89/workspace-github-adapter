@@ -449,13 +449,16 @@ func (h *Handler) syncRunReferenceIDs(ctx context.Context, workspaceID pgtype.UU
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, fmt.Errorf("resolve sync run feature ref %s: %w", featureName, err)
 	}
+	// sync_runs.feature_id FKs workspace_features.id (the surrogate), so the
+	// returned reference is feature.ID. Task rows, however, key on the business
+	// feature_id, so resolve the task by feature.FeatureID below.
 	featureUUID = feature.ID
 	if strings.TrimSpace(taskName) == "" {
 		return featureUUID, taskUUID, nil
 	}
 	task, err := h.Q.GetWorkspaceTaskByName(ctx, database.GetWorkspaceTaskByNameParams{
 		WorkspaceID: workspaceID,
-		FeatureID:   featureUUID,
+		FeatureID:   feature.FeatureID,
 		TaskName:    taskName,
 	})
 	if err != nil {

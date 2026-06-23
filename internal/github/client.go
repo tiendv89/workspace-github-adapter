@@ -102,14 +102,21 @@ func (c *client) do(ctx context.Context, url string) ([]byte, error) {
 		if resp.StatusCode >= 500 {
 			return nil, domain.SourceError{
 				Code:      domain.ErrGitHubServerError,
-				Message:   fmt.Sprintf("GitHub API server error (HTTP %d)", resp.StatusCode),
+				Message:   fmt.Sprintf("GitHub API server error (HTTP %d) for %s", resp.StatusCode, url),
 				Source:    domain.ErrorSourceGitHub,
 				Retryable: true,
 			}
 		}
+		// Include the URL and a body snippet — GitHub's 4xx body (e.g. a 422 "No
+		// commit found for ...", or an oversized-file message) and the URL say
+		// which call failed and why.
+		snippet := string(body)
+		if len(snippet) > 300 {
+			snippet = snippet[:300]
+		}
 		return nil, domain.SourceError{
 			Code:      domain.ErrGitHubNetworkError,
-			Message:   fmt.Sprintf("GitHub API unexpected response (HTTP %d)", resp.StatusCode),
+			Message:   fmt.Sprintf("GitHub API unexpected response (HTTP %d) for %s: %s", resp.StatusCode, url, snippet),
 			Source:    domain.ErrorSourceGitHub,
 			Retryable: false,
 		}
