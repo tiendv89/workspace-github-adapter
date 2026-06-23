@@ -14,12 +14,19 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
 
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 )
+
+// featureFetchConcurrency bounds how many features are fetched from GitHub in
+// parallel during a full import. Each feature is several Contents API calls, so
+// this is the main lever on full-sync latency for large workspaces; kept modest
+// to avoid GitHub secondary rate limits.
+const featureFetchConcurrency = 8
 
 // Adapter implements domain.GitHubWorkspaceAdapter.
 type Adapter struct {
@@ -417,29 +424,53 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 		workspaceID = slug
 	}
 
+	// Fetch features concurrently — each feature is several GitHub round trips,
+	// so a sequential loop is the dominant cost for large workspaces (>50
+	// features took minutes). Bounded concurrency keeps it fast without
+	// tripping GitHub's secondary rate limits. Results are written by index to
+	// preserve order; only the progress counter is shared (atomic).
+	type featResult struct {
+		feat *domain.FeatureSnapshot
+		errs []domain.SourceError
+	}
+	results := make([]featResult, len(featureIDs))
+	total := len(featureIDs)
+
+	log.Info().Str("repo", owner+"/"+repo).Str("ref", ref).Int("features", total).Int("concurrency", featureFetchConcurrency).Msg("import: discovered features, fetching")
+
+	sem := make(chan struct{}, featureFetchConcurrency)
+	var wg sync.WaitGroup
+	var done int64
+	for i, featureID := range featureIDs {
+		wg.Add(1)
+		go func(i int, featureID string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			feat, errs := a.fetchFeature(ctx, c, owner, repo, ref, featureID, pathSet)
+			results[i] = featResult{feat: feat, errs: errs}
+
+			n := atomic.AddInt64(&done, 1)
+			if feat != nil {
+				log.Info().Str("repo", owner+"/"+repo).Str("feature_id", featureID).
+					Int64("progress", n).Int("total", total).Int("tasks", len(feat.Tasks)).
+					Msg("import: fetched feature")
+			} else {
+				log.Warn().Str("repo", owner+"/"+repo).Str("feature_id", featureID).
+					Int64("progress", n).Int("total", total).
+					Msg("import: feature skipped (no snapshot)")
+			}
+		}(i, featureID)
+	}
+	wg.Wait()
+
 	var sourceErrors []domain.SourceError
 	features := make([]domain.FeatureSnapshot, 0, len(featureIDs))
-
-	log.Info().Str("repo", owner+"/"+repo).Str("ref", ref).Int("features", len(featureIDs)).Msg("import: discovered features, fetching")
-	for i, featureID := range featureIDs {
-		feat, errs := a.fetchFeature(ctx, c, owner, repo, ref, featureID, pathSet)
-		sourceErrors = append(sourceErrors, errs...)
-		if feat != nil {
-			features = append(features, *feat)
-			log.Info().
-				Str("repo", owner+"/"+repo).
-				Str("feature_id", featureID).
-				Int("progress", i+1).
-				Int("total", len(featureIDs)).
-				Int("tasks", len(feat.Tasks)).
-				Msg("import: fetched feature")
-		} else {
-			log.Warn().
-				Str("repo", owner+"/"+repo).
-				Str("feature_id", featureID).
-				Int("progress", i+1).
-				Int("total", len(featureIDs)).
-				Msg("import: feature skipped (no snapshot)")
+	for _, r := range results {
+		sourceErrors = append(sourceErrors, r.errs...)
+		if r.feat != nil {
+			features = append(features, *r.feat)
 		}
 	}
 
