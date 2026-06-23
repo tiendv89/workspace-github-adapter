@@ -35,7 +35,7 @@ func ExportedSyncRunToSourceStateFromValue(r database.WorkspaceSyncRun, threshol
 }
 
 func ExportedUpsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, snap *domain.WorkspaceSnapshot) error {
-	return upsertSnapshot(ctx, q, uid, snap)
+	return upsertSnapshot(ctx, q, nil, uid, snap)
 }
 
 // UUIDFromString parses a UUID string into pgtype.UUID — used by tests.

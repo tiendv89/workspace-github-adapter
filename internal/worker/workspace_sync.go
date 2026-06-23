@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
@@ -30,9 +31,24 @@ type commitComparer interface {
 }
 
 // HandleWorkspaceSync processes workspace:sync jobs.
-func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error {
+func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) (err error) {
 	var payload queue.WorkspaceSyncPayload
-	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+	// Catch-all: guarantee every failure is logged with its cause, regardless of
+	// which path returned it (validation, incremental, save, record-success).
+	// Without this, asynq only logs a generic "Retry exhausted" and the real
+	// reason is invisible.
+	defer func() {
+		if err != nil {
+			log.Error().
+				Err(err).
+				Str("workspace_id", payload.WorkspaceID).
+				Str("repo_url", payload.RepoURL).
+				Str("mode", payload.Mode).
+				Msg("workspace sync handler returned error")
+		}
+	}()
+
+	if err = json.Unmarshal(t.Payload(), &payload); err != nil {
 		return fmt.Errorf("unmarshal payload: %w", err)
 	}
 	if payload.RepoURL == "" {
@@ -41,7 +57,7 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 	if strings.TrimSpace(payload.WorkspaceID) == "" {
 		return fmt.Errorf("workspace_id is required for workspace sync: %w", asynq.SkipRetry)
 	}
-	if err := h.ensureWorkspaceExists(ctx, payload.WorkspaceID); err != nil {
+	if err = h.ensureWorkspaceExists(ctx, payload.WorkspaceID); err != nil {
 		return err
 	}
 	if payload.DefaultBranch == "" {
@@ -66,30 +82,22 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 	}
 
 	log.Info().Str("workspace_id", payload.WorkspaceID).Str("repo_url", payload.RepoURL).Str("ref", ref).Msg("sync started")
-
-	// Try an incremental, commit-diff sync first: diff the last-synced commit
-	// against HEAD and only re-fetch changed features (or no-op when nothing
-	// changed). Falls back to a full reconciliation for anything it can't safely
-	// handle incrementally (no baseline, deletions/renames, workspace.yaml
-	// changes, a too-large diff, or any fetch error).
-	if handled, err := h.tryIncrementalSync(ctx, payload, trigger, ref); err != nil {
+	handled, err := h.tryIncrementalSync(ctx, payload, trigger, ref)
+	if err != nil {
 		return err
-	} else if handled {
+	}
+	if handled {
 		return nil
 	}
 
-	// Full reconciliation: clear pending task-sync jobs first, then sync everything.
-
-	// Delete all pending task-sync jobs before full reconciliation starts.
-	// The full read supersedes all queued partial updates.
 	inspector := h.openPendingTaskInspector()
 	defer func() {
-		if err := inspector.Close(); err != nil {
-			log.Warn().Err(err).Msg("close asynq inspector")
+		if cerr := inspector.Close(); cerr != nil {
+			log.Warn().Err(cerr).Msg("close asynq inspector")
 		}
 	}()
-	if _, err := clearPendingTaskSyncJobsForWorkspace(inspector, payload.WorkspaceID); err != nil {
-		err = fmt.Errorf("clear pending task-sync jobs for workspace %s: %w", payload.WorkspaceID, err)
+	if _, cerr := clearPendingTaskSyncJobsForWorkspace(inspector, payload.WorkspaceID); cerr != nil {
+		err = fmt.Errorf("clear pending task-sync jobs for workspace %s: %w", payload.WorkspaceID, cerr)
 		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)
 		return err
 	}
@@ -108,10 +116,7 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)
 		return err
 	}
-	// Per-feature/task parse or fetch errors (e.g. a malformed task YAML) are
-	// non-fatal: skip the affected feature/task and import the rest, instead of
-	// failing the whole workspace sync. Repo-level failures already returned via
-	// err above.
+
 	for _, se := range snap.SourceErrors {
 		log.Warn().
 			Str("workspace_id", payload.WorkspaceID).
@@ -379,6 +384,11 @@ func (h *Handler) recordFailedRun(ctx context.Context, payload queue.WorkspaceSy
 		Str("mode", mode).
 		Str("code", code).
 		Msg("workspace sync failed")
+	// Detach from the sync context: if the sync failed because its context was
+	// cancelled (e.g. the task timeout fired), that cancellation would also block
+	// recording the failure to sync_runs. Keep request values, drop the deadline.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
 	runID, err := h.ensureSyncRun(ctx, payload, trigger, mode, branch, nil, false)
 	if err != nil {
 		log.Error().Err(err).Str("workspace_id", payload.WorkspaceID).AnErr("original_error", syncErr).Msg("ensure failed sync run failed")

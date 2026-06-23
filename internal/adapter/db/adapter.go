@@ -393,7 +393,7 @@ func (a *Adapter) SaveSnapshot(ctx context.Context, workspaceID string, snapshot
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := upsertSnapshot(ctx, a.q.WithTx(tx), uid, snapshot); err != nil {
+	if err := upsertSnapshot(ctx, a.q.WithTx(tx), tx, uid, snapshot); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -561,7 +561,13 @@ func (a *Adapter) GetLatestSyncRun(ctx context.Context, workspaceID string) (*do
 }
 
 // upsertSnapshot is the transactional core of SaveSnapshot.
-func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, snap *domain.WorkspaceSnapshot) error {
+// txBeginner creates a nested transaction (savepoint). *pgx.Tx satisfies it;
+// tests pass nil to upsert features directly without per-feature isolation.
+type txBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
+func upsertSnapshot(ctx context.Context, q *database.Queries, beginner txBeginner, uid pgtype.UUID, snap *domain.WorkspaceSnapshot) error {
 	mgmtRepoID := snap.ManagementRepoID
 	if mgmtRepoID == "" {
 		mgmtRepoID = "management-repo"
@@ -602,13 +608,56 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, s
 		return fmt.Errorf("delete stale repos: %w", err)
 	}
 
-	// Upsert features, docs, tasks, activity.
+	// Upsert features, docs, tasks, activity. Each feature runs in its own
+	// savepoint so a single bad feature (constraint violation, malformed task
+	// data) is skipped and logged instead of rolling back the entire workspace
+	// snapshot — mirroring the non-fatal handling of per-feature import errors.
 	featureIDs := make([]string, 0, len(snap.Features))
+	skipped := 0
 	for _, f := range snap.Features {
-		if err := upsertFeatureSnapshot(ctx, q, uid, f); err != nil {
-			return err
-		}
+		// Keep every feature present in git on the keep-list, even if its upsert
+		// is skipped below, so the stale-delete step never removes an existing
+		// feature just because this sync couldn't write it.
 		featureIDs = append(featureIDs, f.FeatureID)
+
+		// No savepoint support (tests): upsert directly, error is fatal.
+		if beginner == nil {
+			if err := upsertFeatureSnapshot(ctx, q, uid, f); err != nil {
+				return err
+			}
+			continue
+		}
+
+		sp, err := beginner.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin savepoint for feature %s: %w", f.FeatureID, err)
+		}
+		if err := upsertFeatureSnapshot(ctx, q.WithTx(sp), uid, f); err != nil {
+			_ = sp.Rollback(ctx)
+			skipped++
+			log.Warn().
+				Err(err).
+				Str("workspace_id", uuidStr(uid)).
+				Str("feature_id", f.FeatureID).
+				Msg("save snapshot: skipping feature with upsert error")
+			continue
+		}
+		if err := sp.Commit(ctx); err != nil {
+			skipped++
+			log.Warn().
+				Err(err).
+				Str("workspace_id", uuidStr(uid)).
+				Str("feature_id", f.FeatureID).
+				Msg("save snapshot: commit savepoint failed, skipping feature")
+			continue
+		}
+	}
+	if skipped > 0 {
+		log.Warn().
+			Int("skipped", skipped).
+			Int("total", len(snap.Features)).
+			Str("workspace_id", uuidStr(uid)).
+			Msg("save snapshot: some features skipped due to upsert errors")
 	}
 	if err := q.DeleteWorkspaceFeaturesNotIn(ctx, database.DeleteWorkspaceFeaturesNotInParams{
 		WorkspaceID:  uid,
