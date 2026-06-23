@@ -214,22 +214,43 @@ func featurePatternFromTaskPattern(pattern string) string {
 // TouchedFeatureIDs extracts unique feature IDs from docs/features/<feature-id>/ paths
 // across all commits in the push event.
 func TouchedFeatureIDs(ev *PushEvent) []string {
+	var paths []string
+	for _, c := range ev.Commits {
+		paths = append(paths, c.Added...)
+		paths = append(paths, c.Modified...)
+		paths = append(paths, c.Removed...)
+	}
+	return FeatureIDsFromPaths(paths)
+}
+
+// FeatureIDsFromPaths extracts the unique feature IDs referenced by a flat list
+// of repo-relative paths (docs/features/<feature-id>/...), preserving first-seen
+// order. Used by incremental sync to map a commit diff to affected features.
+func FeatureIDsFromPaths(paths []string) []string {
 	seen := make(map[string]struct{})
 	var ids []string
-	for _, c := range ev.Commits {
-		for _, paths := range [][]string{c.Added, c.Modified, c.Removed} {
-			for _, p := range paths {
-				m := featurePathRe.FindStringSubmatch(p)
-				if m == nil {
-					continue
-				}
-				fid := m[1]
-				if _, dup := seen[fid]; !dup {
-					seen[fid] = struct{}{}
-					ids = append(ids, fid)
-				}
-			}
+	for _, p := range paths {
+		m := featurePathRe.FindStringSubmatch(p)
+		if m == nil {
+			continue
+		}
+		fid := m[1]
+		if _, dup := seen[fid]; !dup {
+			seen[fid] = struct{}{}
+			ids = append(ids, fid)
 		}
 	}
 	return ids
+}
+
+// PathsTouchWorkspaceConfig reports whether any path affects workspace-level
+// config (workspace.yaml) — a change there can alter the repo/feature set, so
+// incremental sync must fall back to a full reconciliation.
+func PathsTouchWorkspaceConfig(paths []string) bool {
+	for _, p := range paths {
+		if p == "workspace.yaml" {
+			return true
+		}
+	}
+	return false
 }

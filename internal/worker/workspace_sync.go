@@ -18,7 +18,16 @@ import (
 
 	"github.com/tiendv89/workspace-github-adapter/internal/database"
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
+	"github.com/tiendv89/workspace-github-adapter/internal/webhook"
 )
+
+// commitComparer is the optional capability used for incremental (commit-diff)
+// syncs. The production GitHub adapter implements it; test mocks that don't are
+// transparently handled by falling back to a full reconciliation.
+type commitComparer interface {
+	HeadCommit(ctx context.Context, repoURL, ref string) (string, error)
+	CompareChangedPaths(ctx context.Context, repoURL, base, head string) (changed, removed []string, complete bool, err error)
+}
 
 // HandleWorkspaceSync processes workspace:sync jobs.
 func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error {
@@ -56,8 +65,20 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		return h.handleTargetedSync(ctx, payload, trigger, ref)
 	}
 
-	// Full reconciliation: clear pending task-sync jobs first, then sync everything.
 	log.Info().Str("workspace_id", payload.WorkspaceID).Str("repo_url", payload.RepoURL).Str("ref", ref).Msg("sync started")
+
+	// Try an incremental, commit-diff sync first: diff the last-synced commit
+	// against HEAD and only re-fetch changed features (or no-op when nothing
+	// changed). Falls back to a full reconciliation for anything it can't safely
+	// handle incrementally (no baseline, deletions/renames, workspace.yaml
+	// changes, a too-large diff, or any fetch error).
+	if handled, err := h.tryIncrementalSync(ctx, payload, trigger, ref); err != nil {
+		return err
+	} else if handled {
+		return nil
+	}
+
+	// Full reconciliation: clear pending task-sync jobs first, then sync everything.
 
 	// Delete all pending task-sync jobs before full reconciliation starts.
 	// The full read supersedes all queued partial updates.
@@ -201,6 +222,76 @@ func (h *Handler) handleTargetedSync(ctx context.Context, payload queue.Workspac
 
 	log.Info().Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Msg("targeted sync finished")
 	return nil
+}
+
+// tryIncrementalSync diffs the last-synced commit against HEAD and re-fetches
+// only the changed features (or no-ops when nothing changed), avoiding the cost
+// of a full reconciliation. Returns handled=true when it fully satisfied the
+// sync; handled=false means the caller should fall back to a full sync.
+func (h *Handler) tryIncrementalSync(ctx context.Context, payload queue.WorkspaceSyncPayload, trigger, ref string) (bool, error) {
+	cc, ok := h.GitHub.(commitComparer)
+	if !ok {
+		return false, nil
+	}
+	wsUUID, err := pgutil.PgUUID(payload.WorkspaceID)
+	if err != nil {
+		return false, nil
+	}
+	last, err := h.Q.GetLatestSyncRun(ctx, wsUUID)
+	if err != nil || last.Status != "success" || last.CommitSha == nil || *last.CommitSha == "" {
+		return false, nil // no trustworthy baseline → full sync
+	}
+	lastCommit := *last.CommitSha
+
+	head, err := cc.HeadCommit(ctx, payload.RepoURL, ref)
+	if err != nil {
+		return false, nil // can't resolve HEAD → let full sync run/report
+	}
+
+	if head == lastCommit {
+		log.Info().Str("workspace_id", payload.WorkspaceID).Str("commit_sha", head).Msg("sync incremental: already up to date — skipping fetch")
+		if rerr := h.recordSuccessfulRun(ctx, payload, trigger, "incremental", ref, head); rerr != nil {
+			return true, rerr
+		}
+		return true, nil
+	}
+
+	changed, removed, complete, err := cc.CompareChangedPaths(ctx, payload.RepoURL, lastCommit, head)
+	if err != nil || !complete {
+		return false, nil
+	}
+	// Anything structural (deletions/renames or workspace.yaml) needs a full
+	// reconciliation — full sync also prunes features removed from git.
+	if webhook.PathsTouchWorkspaceConfig(changed) || webhook.PathsTouchWorkspaceConfig(removed) {
+		return false, nil
+	}
+	if len(webhook.FeatureIDsFromPaths(removed)) > 0 {
+		return false, nil
+	}
+
+	featureIDs := webhook.FeatureIDsFromPaths(changed)
+	log.Info().
+		Str("workspace_id", payload.WorkspaceID).
+		Str("from", lastCommit).Str("to", head).
+		Int("changed_features", len(featureIDs)).
+		Msg("sync incremental: re-fetching changed features")
+
+	for i, fid := range featureIDs {
+		snap, ferr := h.GitHub.FetchFeature(ctx, payload.RepoURL, ref, fid)
+		if ferr != nil {
+			return false, nil // fall back to full on any fetch issue
+		}
+		if serr := h.DB.SaveFeatureSnapshot(ctx, payload.WorkspaceID, *snap); serr != nil {
+			return false, nil
+		}
+		log.Info().Str("workspace_id", payload.WorkspaceID).Str("feature_id", fid).Int("progress", i+1).Int("total", len(featureIDs)).Int("tasks", len(snap.Tasks)).Msg("sync incremental: synced feature")
+	}
+
+	if rerr := h.recordSuccessfulRun(ctx, payload, trigger, "incremental", ref, head); rerr != nil {
+		return true, rerr
+	}
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("commit_sha", head).Int("features", len(featureIDs)).Msg("sync incremental: finished")
+	return true, nil
 }
 
 func (h *Handler) ensureWorkspaceExists(ctx context.Context, workspaceID string) error {

@@ -295,6 +295,44 @@ func (a *Adapter) FetchFeature(ctx context.Context, repoURL, ref, featureID stri
 	return snap, nil
 }
 
+// HeadCommit resolves the current commit SHA at ref — a single lightweight API
+// call used to decide whether an incremental sync is even needed.
+func (a *Adapter) HeadCommit(ctx context.Context, repoURL, ref string) (string, error) {
+	owner, repo, perr := parseRepoURL(repoURL)
+	if perr != nil {
+		return "", *perr
+	}
+	token, tokErr := a.tokenFor(ctx, owner, repo)
+	if tokErr != nil {
+		return "", tokErr
+	}
+	sha, err := newClient(token).getCommitSHA(ctx, owner, repo, ref)
+	if err != nil {
+		return "", mapFetchError(err, owner, repo)
+	}
+	return sha, nil
+}
+
+// CompareChangedPaths returns the repo-relative paths changed (added/modified/
+// renamed) and removed between base and head. complete=false means the diff
+// couldn't be fully determined (too large) and the caller should do a full
+// reconciliation instead.
+func (a *Adapter) CompareChangedPaths(ctx context.Context, repoURL, base, head string) (changed, removed []string, complete bool, err error) {
+	owner, repo, perr := parseRepoURL(repoURL)
+	if perr != nil {
+		return nil, nil, false, *perr
+	}
+	token, tokErr := a.tokenFor(ctx, owner, repo)
+	if tokErr != nil {
+		return nil, nil, false, tokErr
+	}
+	changed, removed, complete, cerr := newClient(token).compareCommits(ctx, owner, repo, base, head)
+	if cerr != nil {
+		return nil, nil, false, mapFetchError(cerr, owner, repo)
+	}
+	return changed, removed, complete, nil
+}
+
 // FetchTask fetches and parses a single task YAML from the given task branch.
 func (a *Adapter) FetchTask(ctx context.Context, repoURL, taskBranch, featureID, taskID string) (*domain.TaskSnapshot, error) {
 	owner, repo, err := parseRepoURL(repoURL)

@@ -189,6 +189,52 @@ func (c *client) getCommitSHA(ctx context.Context, owner, repo, ref string) (str
 	return commit.SHA, nil
 }
 
+// compareCommits lists files changed between base and head via the Compare API.
+// Returns changed (added/modified/renamed) and removed paths separately so the
+// caller can fall back to a full reconciliation when files were deleted.
+// complete=false when the diff is too large to trust (GitHub caps the files
+// list at 300), again signalling a full sync.
+func (c *client) compareCommits(ctx context.Context, owner, repo, base, head string) (changed, removed []string, complete bool, err error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s?per_page=100", apiBase, owner, repo, base, head)
+	body, err := c.do(ctx, url)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	var cmp struct {
+		Files []struct {
+			Filename         string `json:"filename"`
+			PreviousFilename string `json:"previous_filename"`
+			Status           string `json:"status"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(body, &cmp); err != nil {
+		return nil, nil, false, domain.SourceError{
+			Code:      domain.ErrAdapterInternal,
+			Message:   "failed to parse compare response: " + err.Error(),
+			Source:    domain.ErrorSourceAdapter,
+			Retryable: false,
+		}
+	}
+	// GitHub returns at most 300 files in compare; if we hit that, the list may
+	// be truncated — signal incomplete so the caller does a full sync.
+	if len(cmp.Files) >= 300 {
+		return nil, nil, false, nil
+	}
+	for _, f := range cmp.Files {
+		if f.Status == "removed" {
+			removed = append(removed, f.Filename)
+			continue
+		}
+		changed = append(changed, f.Filename)
+		if f.PreviousFilename != "" {
+			// Renamed: the old path effectively disappeared — treat as removal
+			// so a feature-dir rename triggers a full reconciliation.
+			removed = append(removed, f.PreviousFilename)
+		}
+	}
+	return changed, removed, true, nil
+}
+
 // getFileContent fetches and decodes the content of a single file via the Contents API.
 // Returns nil content (not an error) when the file is not found (404).
 func (c *client) getFileContent(ctx context.Context, owner, repo, path, ref string) ([]byte, error) {

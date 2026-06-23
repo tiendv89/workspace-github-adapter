@@ -74,10 +74,6 @@ func runWork(_ *cobra.Command, _ []string) error {
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(queue.TypeWorkspaceSync, h.HandleWorkspaceSync)
 	mux.HandleFunc(queue.TypeTaskSync, h.HandleTaskSync)
-
-	// Periodically clear stale archived (permanently-failed) tasks so their
-	// fixed per-workspace TaskIDs stop blocking re-enqueue ("already_queued").
-	// Tunables live under `queue:` in config.yaml.
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 	go h.RunQueueCleanup(cleanupCtx, cfg.QueueCleanupInterval(), cfg.QueueArchivedRetention())

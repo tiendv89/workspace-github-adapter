@@ -209,3 +209,32 @@ func TestParsePushEvent(t *testing.T) {
 		t.Errorf("unexpected commits: %+v", ev.Commits)
 	}
 }
+
+func TestFeatureIDsFromPaths(t *testing.T) {
+	paths := []string{
+		"docs/features/voy2-58/product-spec.md",
+		"docs/features/voy2-58/tasks/T1.yaml", // same feature → deduped
+		"docs/features/bet-12-w4-aura/status.yaml",
+		"README.md",          // not a feature path → ignored
+		"docs/other/file.md", // not under features → ignored
+	}
+	got := webhook.FeatureIDsFromPaths(paths)
+	want := []string{"voy2-58", "bet-12-w4-aura"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("at %d: got %q, want %q (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestPathsTouchWorkspaceConfig(t *testing.T) {
+	if !webhook.PathsTouchWorkspaceConfig([]string{"docs/features/x/spec.md", "workspace.yaml"}) {
+		t.Error("expected workspace.yaml to be detected")
+	}
+	if webhook.PathsTouchWorkspaceConfig([]string{"docs/features/x/spec.md"}) {
+		t.Error("did not expect a feature-only change to touch workspace config")
+	}
+}
