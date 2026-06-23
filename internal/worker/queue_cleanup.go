@@ -13,6 +13,10 @@ type CleanupInspector interface {
 	Queues() ([]string, error)
 	ListArchivedTasks(qname string, opts ...asynq.ListOption) ([]*asynq.TaskInfo, error)
 	DeleteTask(qname string, id string) error
+	DeleteAllArchivedTasks(qname string) (int, error)
+	DeleteAllRetryTasks(qname string) (int, error)
+	DeleteAllScheduledTasks(qname string) (int, error)
+	DeleteAllPendingTasks(qname string) (int, error)
 	Close() error
 }
 
@@ -39,7 +43,14 @@ func (h *Handler) RunQueueCleanup(ctx context.Context, interval, retention time.
 		retention = 0
 	}
 	log.Info().Dur("interval", interval).Dur("archived_retention", retention).Msg("queue cleanup started")
-	h.cleanupArchivedOnce(0)
+
+	// Startup drain: a worker restart is the moment to unstick the queue. Clear
+	// every non-active task (archived + retry + scheduled + pending) so any
+	// fixed per-workspace TaskID held by a stuck/backing-off task is freed and
+	// syncs stop returning "already_queued". These are pre-restart leftovers;
+	// real work is re-triggered by webhooks / the periodic sync. (Active tasks
+	// can't be deleted; orphans from the old process expire via their lease.)
+	h.drainStuckTasksOnStart()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -52,6 +63,46 @@ func (h *Handler) RunQueueCleanup(ctx context.Context, interval, retention time.
 		case <-ticker.C:
 			h.cleanupArchivedOnce(retention)
 		}
+	}
+}
+
+// drainStuckTasksOnStart deletes every non-active task (archived, retry,
+// scheduled, pending) across all queues. Run once at worker startup to free
+// fixed per-workspace TaskIDs held by stuck or backing-off tasks that block
+// re-enqueue with "already_queued".
+func (h *Handler) drainStuckTasksOnStart() {
+	insp := h.openCleanupInspector()
+	defer func() { _ = insp.Close() }()
+
+	queues, err := insp.Queues()
+	if err != nil {
+		log.Warn().Err(err).Msg("queue cleanup: list queues failed (startup drain)")
+		return
+	}
+
+	deleters := []struct {
+		state string
+		fn    func(string) (int, error)
+	}{
+		{"archived", insp.DeleteAllArchivedTasks},
+		{"retry", insp.DeleteAllRetryTasks},
+		{"scheduled", insp.DeleteAllScheduledTasks},
+		{"pending", insp.DeleteAllPendingTasks},
+	}
+
+	total := 0
+	for _, q := range queues {
+		for _, d := range deleters {
+			n, derr := d.fn(q)
+			if derr != nil {
+				log.Warn().Err(derr).Str("queue", q).Str("state", d.state).Msg("queue cleanup: startup drain delete failed")
+				continue
+			}
+			total += n
+		}
+	}
+	if total > 0 {
+		log.Info().Int("deleted", total).Msg("queue cleanup: startup drain removed stuck tasks")
 	}
 }
 

@@ -39,6 +39,16 @@ func (f *fakeCleanupInspector) DeleteTask(qname string, id string) error {
 	return nil
 }
 
+func (f *fakeCleanupInspector) DeleteAllArchivedTasks(qname string) (int, error) {
+	n := len(f.archived[qname])
+	f.archived[qname] = nil
+	return n, nil
+}
+
+func (f *fakeCleanupInspector) DeleteAllRetryTasks(qname string) (int, error)     { return 0, nil }
+func (f *fakeCleanupInspector) DeleteAllScheduledTasks(qname string) (int, error) { return 0, nil }
+func (f *fakeCleanupInspector) DeleteAllPendingTasks(qname string) (int, error)   { return 0, nil }
+
 func (f *fakeCleanupInspector) Close() error { f.closed = true; return nil }
 
 func TestCleanupArchivedOnce_DeletesOnlyStale(t *testing.T) {
