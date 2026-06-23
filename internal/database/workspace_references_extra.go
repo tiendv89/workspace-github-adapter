@@ -11,9 +11,11 @@ type GetWorkspaceFeatureByNameParams struct {
 	FeatureName string
 }
 
+// source_path is nullable (go-native / init-PR features carry NULL); COALESCE
+// to ” so it scans cleanly into the non-nullable model field.
 const getWorkspaceFeatureByName = `
 SELECT id, workspace_id, feature_id, feature_name, title, feature_status, current_stage, next_action,
-       stages, source_path, source_hash, created_at, updated_at
+       stages, COALESCE(source_path, '') AS source_path, source_hash, created_at, updated_at
 FROM workspace_features
 WHERE workspace_id = $1 AND feature_name = $2`
 
@@ -46,7 +48,7 @@ type GetWorkspaceTaskByNameParams struct {
 
 const getWorkspaceTaskByName = `
 SELECT id, workspace_id, feature_id, feature_name, task_id, task_name, title, repo, status, depends_on,
-       blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
+       blocked_reason, branch, execution, pr, workspace_pr, COALESCE(source_path, '') AS source_path, source_hash,
        created_at, updated_at
 FROM workspace_tasks
 WHERE workspace_id = $1 AND feature_id = $2 AND task_name = $3`
