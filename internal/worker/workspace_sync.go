@@ -103,9 +103,22 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)
 		return err
 	}
-	if err := firstSnapshotSourceError(snap); err != nil {
+	if snap == nil {
+		err := domain.NewDatabaseError(domain.ErrAdapterInternal, "workspace import returned nil snapshot")
 		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)
 		return err
+	}
+	// Per-feature/task parse or fetch errors (e.g. a malformed task YAML) are
+	// non-fatal: skip the affected feature/task and import the rest, instead of
+	// failing the whole workspace sync. Repo-level failures already returned via
+	// err above.
+	for _, se := range snap.SourceErrors {
+		log.Warn().
+			Str("workspace_id", payload.WorkspaceID).
+			Str("path", se.Path).
+			Str("code", string(se.Code)).
+			Str("error", se.Message).
+			Msg("sync: skipping feature/task with import error")
 	}
 	snap.WorkspaceID = payload.WorkspaceID
 	snap.RepoURL = payload.RepoURL
@@ -331,16 +344,6 @@ func (h *Handler) upsertGitHubSource(ctx context.Context, workspaceID, repoURL, 
 		return fmt.Errorf("upsert github source: %w", err)
 	}
 	return nil
-}
-
-func firstSnapshotSourceError(snap *domain.WorkspaceSnapshot) error {
-	if snap == nil {
-		return domain.NewDatabaseError(domain.ErrAdapterInternal, "workspace import returned nil snapshot")
-	}
-	if len(snap.SourceErrors) == 0 {
-		return nil
-	}
-	return snap.SourceErrors[0]
 }
 
 func (h *Handler) recordSuccessfulRun(ctx context.Context, payload queue.WorkspaceSyncPayload, trigger, mode, branch, commitSHA string) error {

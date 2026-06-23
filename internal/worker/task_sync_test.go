@@ -219,7 +219,9 @@ func TestHandleWorkspaceSync_CleanupFailureSkipsImport(t *testing.T) {
 	}
 }
 
-func TestHandleWorkspaceSync_SourceErrorsSkipPersistence(t *testing.T) {
+// A malformed feature/task (e.g. invalid task YAML) is skipped, not fatal: the
+// rest of the workspace still persists and the sync run succeeds.
+func TestHandleWorkspaceSync_SourceErrorsAreSkippedNotFatal(t *testing.T) {
 	saveCalled := false
 	runDB := newFakeSyncRunDB(t)
 	parseErr := domain.SourceError{
@@ -241,6 +243,7 @@ func TestHandleWorkspaceSync_SourceErrorsSkipPersistence(t *testing.T) {
 				return &domain.WorkspaceSnapshot{
 					Name:         "workspace",
 					Slug:         "workspace",
+					CommitSHA:    "abc123",
 					SourceErrors: []domain.SourceError{parseErr},
 				}, nil
 			},
@@ -261,27 +264,17 @@ func TestHandleWorkspaceSync_SourceErrorsSkipPersistence(t *testing.T) {
 	}
 
 	err = h.HandleWorkspaceSync(context.Background(), asynq.NewTask(queue.TypeWorkspaceSync, b))
-	if err == nil {
-		t.Fatal("expected full sync to fail when snapshot contains source errors")
+	if err != nil {
+		t.Fatalf("expected sync to succeed despite per-feature source errors, got %v", err)
 	}
-	var se domain.SourceError
-	if !errors.As(err, &se) {
-		t.Fatalf("expected SourceError, got %T: %v", err, err)
+	if !saveCalled {
+		t.Fatal("expected SaveSnapshot to be called (good features persist)")
 	}
-	if se.Code != domain.ErrParserInvalidYAML || se.Path != parseErr.Path {
-		t.Fatalf("source error = %+v, want parser error at %s", se, parseErr.Path)
+	if runDB.updateSuccessCalls != 1 {
+		t.Fatalf("expected one successful sync run update, got %d", runDB.updateSuccessCalls)
 	}
-	if saveCalled {
-		t.Fatal("expected SaveSnapshot not to be called for partial snapshot")
-	}
-	if runDB.updateFailedCalls != 1 {
-		t.Fatalf("expected one failed sync run update, got %d", runDB.updateFailedCalls)
-	}
-	if runDB.updateSuccessCalls != 0 {
-		t.Fatalf("expected no successful sync run update, got %d", runDB.updateSuccessCalls)
-	}
-	if runDB.lastErrorCode == nil || *runDB.lastErrorCode != string(domain.ErrParserInvalidYAML) {
-		t.Fatalf("failed sync run error code = %v, want %s", runDB.lastErrorCode, domain.ErrParserInvalidYAML)
+	if runDB.updateFailedCalls != 0 {
+		t.Fatalf("expected no failed sync run update, got %d", runDB.updateFailedCalls)
 	}
 }
 
@@ -584,6 +577,8 @@ func (f *fakeSyncRunDB) QueryRow(_ context.Context, query string, args ...interf
 			status:      "success",
 			mode:        f.lastMode,
 		}
+	case strings.Contains(query, "workspace_github_sources"):
+		return githubSourceRow{workspaceID: f.workspaceID}
 	default:
 		f.t.Fatalf("unexpected query: %s", query)
 		return errorRow{err: errors.New("unexpected query")}
@@ -603,6 +598,24 @@ func (r workspaceRow) Scan(dest ...any) error {
 		"management-repo",
 		(*string)(nil),
 		(*string)(nil), // slack_channel_id
+		pgtype.Timestamptz{},
+		pgtype.Timestamptz{},
+	}
+	return scanValues(dest, values)
+}
+
+type githubSourceRow struct {
+	workspaceID pgtype.UUID
+}
+
+func (r githubSourceRow) Scan(dest ...any) error {
+	values := []any{
+		pgtype.UUID{},                  // id
+		r.workspaceID,                  // workspace_id
+		"https://github.com/acme/repo", // repo_url
+		"acme",                         // repo_owner
+		"repo",                         // repo_name
+		(*string)(nil),                 // default_branch
 		pgtype.Timestamptz{},
 		pgtype.Timestamptz{},
 	}

@@ -286,11 +286,17 @@ func (a *Adapter) FetchFeature(ctx context.Context, repoURL, ref, featureID stri
 	}
 
 	snap, errs := a.fetchFeature(ctx, c, owner, repo, ref, featureID, pathSet)
-	if len(errs) > 0 {
-		return nil, errs[0]
-	}
 	if snap == nil {
+		// The feature itself is unobtainable (no docs / not found).
+		if len(errs) > 0 {
+			return nil, errs[0]
+		}
 		return nil, domain.NewGitHubNotFoundError("https://github.com/" + owner + "/" + repo)
+	}
+	// The feature loaded; any per-task/doc errors are non-fatal — log them as
+	// skipped and return the feature with whatever parsed cleanly.
+	for _, e := range errs {
+		log.Warn().Str("repo", owner+"/"+repo).Str("feature_id", featureID).Str("path", e.Path).Str("error", e.Message).Msg("fetch feature: skipping artifact with import error")
 	}
 	return snap, nil
 }
