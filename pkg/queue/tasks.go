@@ -40,12 +40,19 @@ type TaskSyncPayload struct {
 }
 
 // NewWorkspaceSyncTask creates an asynq task for syncing/importing a workspace from GitHub.
+// Timeout bounds a single run (so a slow/stuck fetch can't hang a worker slot
+// indefinitely — the handler ctx is cancelled at the deadline), and MaxRetry
+// caps retries so a persistently-failing sync doesn't re-run ~25 times and
+// flood the logs with repeated "sync started".
 func NewWorkspaceSyncTask(payload WorkspaceSyncPayload) (*asynq.Task, error) {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal workspace sync payload: %w", err)
 	}
-	return asynq.NewTask(TypeWorkspaceSync, b), nil
+	return asynq.NewTask(TypeWorkspaceSync, b,
+		asynq.Timeout(10*time.Minute),
+		asynq.MaxRetry(3),
+	), nil
 }
 
 // NewTaskSyncTask creates an asynq task:sync job for a task-branch webhook event.
