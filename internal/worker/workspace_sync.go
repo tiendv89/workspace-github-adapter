@@ -73,6 +73,7 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("ref", ref).Msg("sync [1/3] fetching workspace from GitHub")
 	snap, err := h.GitHub.ImportWorkspace(ctx, domain.ImportInput{
 		RepoURL:       payload.RepoURL,
 		DefaultBranch: ref,
@@ -92,6 +93,17 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		snap.Slug = urlutil.Slugify(payload.Name)
 	}
 
+	taskTotal := 0
+	for i := range snap.Features {
+		taskTotal += len(snap.Features[i].Tasks)
+	}
+	log.Info().
+		Str("workspace_id", payload.WorkspaceID).
+		Str("commit_sha", snap.CommitSHA).
+		Int("features", len(snap.Features)).
+		Int("tasks", taskTotal).
+		Msg("sync [2/3] fetched — saving snapshot to DB")
+
 	if err := h.DB.SaveSnapshot(ctx, payload.WorkspaceID, snap); err != nil {
 		h.recordFailedRun(ctx, payload, trigger, mode, ref, err)
 		return err
@@ -104,7 +116,12 @@ func (h *Handler) HandleWorkspaceSync(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
-	log.Info().Str("workspace_id", payload.WorkspaceID).Str("commit_sha", snap.CommitSHA).Msg("sync finished")
+	log.Info().
+		Str("workspace_id", payload.WorkspaceID).
+		Str("commit_sha", snap.CommitSHA).
+		Int("features", len(snap.Features)).
+		Int("tasks", taskTotal).
+		Msg("sync [3/3] finished")
 	return nil
 }
 
@@ -163,6 +180,7 @@ func (h *Handler) handleTargetedSync(ctx context.Context, payload queue.Workspac
 		h.recordFailedRun(ctx, payload, trigger, "targeted", ref, err)
 		return err
 	}
+	log.Info().Str("workspace_id", payload.WorkspaceID).Str("feature_id", payload.FeatureID).Int("tasks", len(snap.Tasks)).Msg("targeted sync: fetched feature — saving")
 
 	err = h.DB.SaveFeatureSnapshot(ctx, payload.WorkspaceID, *snap)
 	if err != nil {

@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/tiendv89/workspace-github-adapter/internal/domain"
 )
 
@@ -418,11 +420,26 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 	var sourceErrors []domain.SourceError
 	features := make([]domain.FeatureSnapshot, 0, len(featureIDs))
 
-	for _, featureID := range featureIDs {
+	log.Info().Str("repo", owner+"/"+repo).Str("ref", ref).Int("features", len(featureIDs)).Msg("import: discovered features, fetching")
+	for i, featureID := range featureIDs {
 		feat, errs := a.fetchFeature(ctx, c, owner, repo, ref, featureID, pathSet)
 		sourceErrors = append(sourceErrors, errs...)
 		if feat != nil {
 			features = append(features, *feat)
+			log.Info().
+				Str("repo", owner+"/"+repo).
+				Str("feature_id", featureID).
+				Int("progress", i+1).
+				Int("total", len(featureIDs)).
+				Int("tasks", len(feat.Tasks)).
+				Msg("import: fetched feature")
+		} else {
+			log.Warn().
+				Str("repo", owner+"/"+repo).
+				Str("feature_id", featureID).
+				Int("progress", i+1).
+				Int("total", len(featureIDs)).
+				Msg("import: feature skipped (no snapshot)")
 		}
 	}
 
