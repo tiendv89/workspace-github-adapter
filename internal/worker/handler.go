@@ -21,6 +21,7 @@ type Handler struct {
 	GitHub                  domain.GitHubWorkspaceAdapter
 	RedisOpt                asynq.RedisConnOpt
 	NewPendingTaskInspector func() PendingTaskInspector
+	NewCleanupInspector     func() CleanupInspector
 }
 
 func (h *Handler) openPendingTaskInspector() PendingTaskInspector {

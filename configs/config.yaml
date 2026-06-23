@@ -31,3 +31,7 @@ github:
 
 sync:
   stale_threshold_minutes: 30
+
+queue:
+  cleanup_interval_minutes: 5
+  archived_retention_minutes: 10

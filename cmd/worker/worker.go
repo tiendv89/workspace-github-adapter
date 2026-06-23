@@ -75,6 +75,13 @@ func runWork(_ *cobra.Command, _ []string) error {
 	mux.HandleFunc(queue.TypeWorkspaceSync, h.HandleWorkspaceSync)
 	mux.HandleFunc(queue.TypeTaskSync, h.HandleTaskSync)
 
+	// Periodically clear stale archived (permanently-failed) tasks so their
+	// fixed per-workspace TaskIDs stop blocking re-enqueue ("already_queued").
+	// Tunables live under `queue:` in config.yaml.
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	defer cleanupCancel()
+	go h.RunQueueCleanup(cleanupCtx, cfg.QueueCleanupInterval(), cfg.QueueArchivedRetention())
+
 	log.Info().Msg("worker listening for Redis queue tasks")
 	if err := srv.Run(mux); err != nil {
 		return fmt.Errorf("worker stopped: %w", err)

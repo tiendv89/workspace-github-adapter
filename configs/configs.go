@@ -18,6 +18,7 @@ type Config struct {
 	Redis  RedisConfig  `mapstructure:"redis"`
 	GitHub GitHubConfig `mapstructure:"github"`
 	Sync   SyncConfig   `mapstructure:"sync"`
+	Queue  QueueConfig  `mapstructure:"queue"`
 }
 
 type LogConfig struct {
@@ -84,6 +85,31 @@ func (c *Config) StaleThreshold() time.Duration {
 	return time.Duration(m) * time.Minute
 }
 
+// QueueConfig tunes the periodic cleanup of stale archived asynq tasks.
+type QueueConfig struct {
+	CleanupIntervalMinutes   int `mapstructure:"cleanup_interval_minutes"`
+	ArchivedRetentionMinutes int `mapstructure:"archived_retention_minutes"`
+}
+
+// CleanupInterval is how often the worker sweeps for stale archived tasks.
+func (c *Config) QueueCleanupInterval() time.Duration {
+	m := c.Queue.CleanupIntervalMinutes
+	if m <= 0 {
+		return 15 * time.Minute
+	}
+	return time.Duration(m) * time.Minute
+}
+
+// QueueArchivedRetention is how long an archived task is kept before cleanup
+// deletes it. 0 means delete all archived tasks immediately on each sweep.
+func (c *Config) QueueArchivedRetention() time.Duration {
+	m := c.Queue.ArchivedRetentionMinutes
+	if m < 0 {
+		return 0
+	}
+	return time.Duration(m) * time.Minute
+}
+
 // Init loads configuration into the global G variable. Called via cobra.OnInitialize.
 func Init(path string) {
 	v := viper.New()
@@ -91,6 +117,8 @@ func Init(path string) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("api.http.address", ":8080")
 	v.SetDefault("sync.stale_threshold_minutes", 30)
+	v.SetDefault("queue.cleanup_interval_minutes", 15)
+	v.SetDefault("queue.archived_retention_minutes", 60)
 
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
@@ -119,6 +147,8 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("api.http.address", ":8080")
 	v.SetDefault("sync.stale_threshold_minutes", 30)
+	v.SetDefault("queue.cleanup_interval_minutes", 15)
+	v.SetDefault("queue.archived_retention_minutes", 60)
 
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
