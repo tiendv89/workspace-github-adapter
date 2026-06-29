@@ -158,9 +158,9 @@ func (db *conflictPreserveOrgDB) QueryRow(_ context.Context, query string, args 
 		}
 		// Second call: return existing source so handler returns "exists".
 		wsUID, _ := pgutil2.PgUUID(validWsID)
-		src := database.WorkspaceGitHubSource{
+		src := database.WorkspaceGithubSource{
 			WorkspaceID: wsUID,
-			RepoURL:     "https://github.com/acme/workspace",
+			RepoUrl:     "https://github.com/acme/workspace",
 			RepoOwner:   "acme",
 			RepoName:    "workspace",
 		}

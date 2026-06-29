@@ -447,6 +447,11 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 		return nil, *parseErr
 	}
 
+	policy, policyErr := parseModelPolicy(wsCfg.ModelPolicy)
+	if policyErr != nil {
+		return nil, *policyErr
+	}
+
 	// Discover feature directories from the tree.
 	featureIDs := discoverFeatureIDs(tree.Tree)
 
@@ -456,6 +461,7 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 		repos = append(repos, domain.RepoEntry{
 			RepoID:     r.ID,
 			BaseBranch: r.BaseBranch,
+			RepoURL:    r.GitHub,
 		})
 	}
 
@@ -531,6 +537,7 @@ func (a *Adapter) fetchSnapshot(ctx context.Context, c *client, owner, repo, ref
 		Features:         features,
 		Repos:            repos,
 		SourceErrors:     sourceErrors,
+		ModelPolicy:      policy,
 	}, nil
 }
 
@@ -635,6 +642,7 @@ func (a *Adapter) fetchFeature(ctx context.Context, c *client, owner, repo, ref,
 	stages := map[string]interface{}{}
 	var activity []domain.ActivityEvent
 	sourceHash := ""
+	featureOwner := ""
 	if status != nil {
 		featureIDValue = firstNonEmpty(status.featureID(), featureID)
 		title = firstNonEmpty(status.Title, featureIDValue)
@@ -646,6 +654,7 @@ func (a *Adapter) fetchFeature(ctx context.Context, c *client, owner, repo, ref,
 		}
 		activity = mapActivityLog(status.History, "feature", featureIDValue, "")
 		sourceHash = hashContent(statusData)
+		featureOwner = status.Owner
 	}
 
 	return &domain.FeatureSnapshot{
@@ -657,6 +666,7 @@ func (a *Adapter) fetchFeature(ctx context.Context, c *client, owner, repo, ref,
 		Stages:       stages,
 		SourcePath:   primarySourcePath,
 		SourceHash:   sourceHash,
+		Owner:        featureOwner,
 		Documents:    docs,
 		Tasks:        taskSnapshots,
 		Activity:     activity,

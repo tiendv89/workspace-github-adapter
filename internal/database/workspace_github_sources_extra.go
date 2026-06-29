@@ -18,13 +18,13 @@ LIMIT 1`
 
 // GetGitHubSourceByRepo looks up a GitHub source record by owner/repo name.
 // Used by the webhook handler to identify which workspace a push event belongs to.
-func (q *Queries) GetGitHubSourceByRepo(ctx context.Context, arg GetGitHubSourceByRepoParams) (WorkspaceGitHubSource, error) {
+func (q *Queries) GetGitHubSourceByRepo(ctx context.Context, arg GetGitHubSourceByRepoParams) (WorkspaceGithubSource, error) {
 	row := q.db.QueryRow(ctx, getGitHubSourceByRepo, arg.RepoOwner, arg.RepoName)
-	var i WorkspaceGitHubSource
+	var i WorkspaceGithubSource
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.RepoURL,
+		&i.RepoUrl,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.DefaultBranch,
@@ -40,19 +40,19 @@ FROM workspace_github_sources`
 
 // ListAllGitHubSources returns all rows from workspace_github_sources in a single query.
 // Used by ListWorkspaces to avoid N+1 lookups.
-func (q *Queries) ListAllGitHubSources(ctx context.Context) ([]WorkspaceGitHubSource, error) {
+func (q *Queries) ListAllGitHubSources(ctx context.Context) ([]WorkspaceGithubSource, error) {
 	rows, err := q.db.Query(ctx, listAllGitHubSources)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WorkspaceGitHubSource
+	var items []WorkspaceGithubSource
 	for rows.Next() {
-		var i WorkspaceGitHubSource
+		var i WorkspaceGithubSource
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
-			&i.RepoURL,
+			&i.RepoUrl,
 			&i.RepoOwner,
 			&i.RepoName,
 			&i.DefaultBranch,

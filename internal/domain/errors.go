@@ -44,6 +44,15 @@ const (
 	ErrValidationInvalidURL   ErrorCode = "VALIDATION_INVALID_URL"
 	ErrValidationInvalidInput ErrorCode = "VALIDATION_INVALID_INPUT"
 	ErrValidationMissingInput ErrorCode = "VALIDATION_MISSING_INPUT"
+
+	// Model policy errors.
+	ErrModelPolicyUnknownPhase      ErrorCode = "MODEL_POLICY_UNKNOWN_PHASE"
+	ErrModelPolicyMissingPhase      ErrorCode = "MODEL_POLICY_MISSING_PHASE"
+	ErrModelPolicyInvalidAllowed    ErrorCode = "MODEL_POLICY_INVALID_ALLOWED"
+	ErrModelPolicyInvalidDefault    ErrorCode = "MODEL_POLICY_INVALID_DEFAULT"
+	ErrModelPolicyDefaultNotAllowed ErrorCode = "MODEL_POLICY_DEFAULT_NOT_ALLOWED"
+	ErrModelUnknown                 ErrorCode = "MODEL_UNKNOWN"
+	ErrModelInactive                ErrorCode = "MODEL_INACTIVE"
 )
 
 // SourceError is the normalized error shape for all backend errors.

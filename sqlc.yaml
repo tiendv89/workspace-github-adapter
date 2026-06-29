@@ -1,7 +1,7 @@
 version: "2"
 sql:
   - engine: "postgresql"
-    schema: "database/migrations"
+    schema: "../workflow-backend/migrations"
     queries: "database/queries"
     gen:
       go:
@@ -27,4 +27,4 @@ sql:
           - db_type: "jsonb"
             go_type:
               import: "encoding/json"
-              type: "json.RawMessage"
+              type: "RawMessage"

@@ -53,7 +53,7 @@ func (h *Handler) HandleTaskSync(ctx context.Context, t *asynq.Task) error {
 	}
 	taskBranch := TaskSyncBranch(payload, branchPattern)
 
-	taskSnap, err := h.GitHub.FetchTask(ctx, src.RepoURL, taskBranch, payload.FeatureID, payload.TaskID)
+	taskSnap, err := h.GitHub.FetchTask(ctx, src.RepoUrl, taskBranch, payload.FeatureID, payload.TaskID)
 	if err != nil {
 		h.recordTaskSyncFailed(ctx, payload, taskBranch, err)
 		return fmt.Errorf("fetch task %s/%s on branch %s: %w", payload.FeatureID, payload.TaskID, taskBranch, err)

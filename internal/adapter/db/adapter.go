@@ -70,7 +70,7 @@ func (a *Adapter) ListWorkspaces(ctx context.Context) ([]domain.WorkspaceSummary
 	}
 	srcMap := make(map[string]string, len(allSrcs))
 	for _, s := range allSrcs {
-		srcMap[uuidStr(s.WorkspaceID)] = s.RepoURL
+		srcMap[uuidStr(s.WorkspaceID)] = s.RepoUrl
 	}
 
 	out := make([]domain.WorkspaceSummary, 0, len(rows))
@@ -213,8 +213,8 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 			DocumentType: d.DocumentType,
 			SourcePath:   d.SourcePath,
 		}
-		if d.URL != nil {
-			dl.URL = *d.URL
+		if d.Url != nil {
+			dl.URL = *d.Url
 		}
 		docLinks = append(docLinks, dl)
 	}
@@ -440,7 +440,7 @@ func (a *Adapter) SaveTaskSnapshot(ctx context.Context, workspaceID string, snap
 			FeatureName: snap.FeatureID,
 			Title:       snap.FeatureID,
 			Stages:      json.RawMessage("[]"),
-			SourcePath:  snap.SourcePath,
+			SourcePath:  ptrStr(snap.SourcePath),
 		})
 		if upsertErr != nil {
 			return fmt.Errorf("upsert placeholder feature for task sync %s: %w", snap.FeatureID, upsertErr)
@@ -522,12 +522,15 @@ func (a *Adapter) GetActiveSnapshot(ctx context.Context, workspaceID string) (*d
 		if r.BaseBranch != nil {
 			re.BaseBranch = *r.BaseBranch
 		}
+		if r.RepoUrl != nil {
+			re.RepoURL = *r.RepoUrl
+		}
 		repoEntries = append(repoEntries, re)
 	}
 
 	repoURL := ""
-	if src.RepoURL != "" {
-		repoURL = src.RepoURL
+	if src.RepoUrl != "" {
+		repoURL = src.RepoUrl
 	}
 
 	return &domain.WorkspaceSnapshot{
@@ -595,6 +598,7 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, beginner txBeginne
 			WorkspaceID: uid,
 			RepoID:      r.RepoID,
 			BaseBranch:  bp,
+			RepoUrl:     ptrStr(r.RepoURL),
 		})
 		if err != nil {
 			return fmt.Errorf("upsert repo %s: %w", r.RepoID, err)
@@ -666,6 +670,50 @@ func upsertSnapshot(ctx context.Context, q *database.Queries, beginner txBeginne
 		return fmt.Errorf("delete stale features: %w", err)
 	}
 
+	if err := syncModelPolicy(ctx, q, uid, snap.ModelPolicy); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// syncModelPolicy replaces all workspace_model_policies rows for the given workspace.
+// A nil policy deletes all rows (absent model_policy block in workspace.yaml).
+func syncModelPolicy(ctx context.Context, q *database.Queries, uid pgtype.UUID, policy *domain.ModelPolicySnapshot) error {
+	if err := q.DeleteWorkspaceModelPolicies(ctx, uid); err != nil {
+		return fmt.Errorf("delete model policies: %w", err)
+	}
+	if policy == nil {
+		return nil
+	}
+	for phase, pp := range policy.Phases {
+		for _, slug := range pp.Allowed {
+			model, err := q.GetModelByModelID(ctx, slug)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return domain.NewValidationError(
+						domain.ErrModelUnknown,
+						fmt.Sprintf("unknown_model_id: %s (phase: %s)", slug, phase),
+					)
+				}
+				return fmt.Errorf("lookup model %s: %w", slug, err)
+			}
+			if !model.Active {
+				return domain.NewValidationError(
+					domain.ErrModelInactive,
+					fmt.Sprintf("inactive_model_id: %s", slug),
+				)
+			}
+			if err := q.InsertWorkspaceModelPolicy(ctx, database.InsertWorkspaceModelPolicyParams{
+				WorkspaceID: uid,
+				Phase:       phase,
+				ModelID:     model.ID,
+				IsDefault:   slug == pp.Default,
+			}); err != nil {
+				return fmt.Errorf("insert model policy %s/%s: %w", phase, slug, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -682,8 +730,9 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 		CurrentStage:  ptrStr(f.CurrentStage),
 		NextAction:    ptrStr(f.NextAction),
 		Stages:        stages,
-		SourcePath:    f.SourcePath,
+		SourcePath:    ptrStr(f.SourcePath),
 		SourceHash:    ptrStr(f.SourceHash),
+		Owner:         ptrStr(f.Owner),
 	})
 	if err != nil {
 		return fmt.Errorf("upsert feature %s: %w", f.FeatureID, err)
@@ -706,7 +755,7 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 			FeatureName:  f.FeatureID,
 			DocumentType: d.DocumentType,
 			SourcePath:   d.SourcePath,
-			URL:          ptrStr(d.URL),
+			Url:          ptrStr(d.URL),
 		})
 		if err != nil {
 			return fmt.Errorf("upsert document %s/%s: %w", f.FeatureID, d.DocumentType, err)
@@ -780,7 +829,7 @@ func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUI
 		Execution:     execution,
 		Pr:            pr,
 		WorkspacePr:   wsPr,
-		SourcePath:    t.SourcePath,
+		SourcePath:    ptrStr(t.SourcePath),
 		SourceHash:    ptrStr(t.SourceHash),
 	})
 	if err != nil {
@@ -807,7 +856,7 @@ func upsertFeatureActivity(ctx context.Context, q *database.Queries, uid pgtype.
 			WorkspaceID: uid,
 			ScopeType:   "feature",
 			FeatureID:   featureUUID,
-			FeatureName: f.FeatureID,
+			FeatureName: ptrStr(f.FeatureID),
 			Action:      ptrStr(evt.Action),
 			Actor:       ptrStr(evt.Actor),
 			OccurredAt:  ptrStr(evt.OccurredAt.Format(time.RFC3339)),
@@ -834,9 +883,9 @@ func upsertTaskActivity(ctx context.Context, q *database.Queries, uid pgtype.UUI
 			WorkspaceID: uid,
 			ScopeType:   "task",
 			FeatureID:   featureUUID,
-			FeatureName: featureName,
+			FeatureName: ptrStr(featureName),
 			TaskID:      taskUUID,
-			TaskName:    t.TaskID,
+			TaskName:    ptrStr(t.TaskID),
 			Action:      ptrStr(evt.Action),
 			Actor:       ptrStr(evt.Actor),
 			OccurredAt:  ptrStr(evt.OccurredAt.Format(time.RFC3339)),
@@ -860,8 +909,8 @@ func buildFeatureSnapshotFromBatch(f database.WorkspaceFeature, docs []database.
 			DocumentType: d.DocumentType,
 			SourcePath:   d.SourcePath,
 		}
-		if d.URL != nil {
-			ds.URL = *d.URL
+		if d.Url != nil {
+			ds.URL = *d.Url
 		}
 		docSnaps = append(docSnaps, ds)
 	}
@@ -874,7 +923,7 @@ func buildFeatureSnapshotFromBatch(f database.WorkspaceFeature, docs []database.
 	fs := domain.FeatureSnapshot{
 		FeatureID:  f.FeatureName,
 		Title:      f.Title,
-		SourcePath: f.SourcePath,
+		SourcePath: derefStr(f.SourcePath),
 		Documents:  docSnaps,
 		Tasks:      taskSnaps,
 	}
@@ -905,7 +954,7 @@ func rowToTaskSnapshot(t database.WorkspaceTask) domain.TaskSnapshot {
 		TaskID:     t.TaskName,
 		FeatureID:  t.FeatureName,
 		Title:      t.Title,
-		SourcePath: t.SourcePath,
+		SourcePath: derefStr(t.SourcePath),
 	}
 	if t.Repo != nil {
 		ts.Repo = *t.Repo
@@ -1081,7 +1130,7 @@ func githubRepoURL(ctx context.Context, q *database.Queries, uid pgtype.UUID) st
 	if err != nil {
 		return ""
 	}
-	return src.RepoURL
+	return src.RepoUrl
 }
 
 // parseUUID parses a workspace UUID string into pgtype.UUID.

@@ -161,7 +161,7 @@ func (h *ServiceHandler) findWorkspaceByRepoURL(ctx context.Context, repoURL str
 	}
 	return &workspaceWebhookInfo{
 		workspaceID:   pgutil2.UUIDString(src.WorkspaceID),
-		repoURL:       src.RepoURL,
+		repoURL:       src.RepoUrl,
 		defaultBranch: defaultBranch,
 		branchPattern: branchPattern,
 	}, nil

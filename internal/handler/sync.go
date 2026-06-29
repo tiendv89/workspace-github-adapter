@@ -45,7 +45,7 @@ func (h *ServiceHandler) SyncWorkspaceHandler(c *gin.Context) {
 	}
 	payload := queue.WorkspaceSyncPayload{
 		WorkspaceID:   workspaceID,
-		RepoURL:       src.RepoURL,
+		RepoURL:       src.RepoUrl,
 		DefaultBranch: defaultBranch,
 		Trigger:       "api_sync",
 		Mode:          "full",

@@ -1,4 +1,6 @@
-.PHONY: run-service run-worker lint test
+-include .env
+
+.PHONY: run-service run-worker lint test sqlc
 
 GO = go
 
@@ -13,3 +15,6 @@ lint:
 
 test:
 	$(GO) test ./... -race
+
+sqlc:
+	sqlc generate

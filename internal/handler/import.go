@@ -256,7 +256,7 @@ func (h *ServiceHandler) upsertGitHubSourceWithQueries(ctx context.Context, q *d
 	}
 	_, err = q.UpsertGitHubSource(ctx, database.UpsertGitHubSourceParams{
 		WorkspaceID:   uid,
-		RepoURL:       repoURL,
+		RepoUrl:       repoURL,
 		RepoOwner:     owner,
 		RepoName:      repo,
 		DefaultBranch: &defaultBranch,
