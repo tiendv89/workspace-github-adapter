@@ -592,14 +592,14 @@ type workspaceRow struct {
 func (r workspaceRow) Scan(dest ...any) error {
 	values := []any{
 		r.workspaceID,
-		pgtype.UUID{}, // organization_id
-		"workspace",
-		"Workspace",
-		"management-repo",
-		(*string)(nil),
+		"workspace",       // slug
+		"Workspace",       // name
+		"management-repo", // management_repo_id
+		(*string)(nil),    // branch_pattern
+		pgtype.Timestamptz{},
+		pgtype.Timestamptz{},
 		(*string)(nil), // slack_channel_id
-		pgtype.Timestamptz{},
-		pgtype.Timestamptz{},
+		pgtype.UUID{},  // organization_id
 	}
 	return scanValues(dest, values)
 }
@@ -637,19 +637,19 @@ func (r syncRunRow) Scan(dest ...any) error {
 	values := []any{
 		r.id,
 		r.workspaceID,
-		"redis_worker",
-		(*string)(nil),
-		pgtype.UUID{},
-		pgtype.UUID{},
-		r.mode,
-		r.status,
-		(*string)(nil),
+		"redis_worker", // trigger
+		(*string)(nil), // branch
+		r.mode,         // mode
+		r.status,       // status
+		(*string)(nil), // commit_sha
 		changedPaths,
 		pgtype.Timestamptz{},
 		pgtype.Timestamptz{},
 		r.errorCode,
 		r.errorMessage,
 		metadata,
+		pgtype.UUID{}, // feature_id
+		pgtype.UUID{}, // task_id
 	}
 	return scanValues(dest, values)
 }
@@ -698,6 +698,15 @@ func scanValues(dest []any, values []any) error {
 				return fmt.Errorf("values[%d]: expected pgtype.Timestamptz, got %T", i, values[i])
 			}
 			*out = v
+		case *[]byte:
+			switch v := values[i].(type) {
+			case []byte:
+				*out = v
+			case json.RawMessage:
+				*out = []byte(v)
+			default:
+				return fmt.Errorf("values[%d]: expected []byte, got %T", i, values[i])
+			}
 		default:
 			return errors.New("unsupported scan destination")
 		}

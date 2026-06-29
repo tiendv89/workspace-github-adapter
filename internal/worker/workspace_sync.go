@@ -340,7 +340,7 @@ func (h *Handler) upsertGitHubSource(ctx context.Context, workspaceID, repoURL, 
 	}
 	_, err = h.Q.UpsertGitHubSource(ctx, database.UpsertGitHubSourceParams{
 		WorkspaceID:   uid,
-		RepoURL:       repoURL,
+		RepoUrl:       repoURL,
 		RepoOwner:     owner,
 		RepoName:      repo,
 		DefaultBranch: &defaultBranch,

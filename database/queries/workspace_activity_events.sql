@@ -1,20 +1,20 @@
 -- name: ListActivityEvents :many
-SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
-       occurred_at, note, sequence, raw_event, created_at
+SELECT id, workspace_id, scope_type, action, actor,
+       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id
 FROM workspace_activity_events
 WHERE workspace_id = $1
 ORDER BY occurred_at DESC, sequence DESC;
 
 -- name: ListFeatureActivityEvents :many
-SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
-       occurred_at, note, sequence, raw_event, created_at
+SELECT id, workspace_id, scope_type, action, actor,
+       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id
 FROM workspace_activity_events
 WHERE workspace_id = $1 AND feature_id = $2
 ORDER BY occurred_at DESC, sequence DESC;
 
 -- name: ListTaskActivityEvents :many
-SELECT id, workspace_id, scope_type, feature_id, task_id, action, actor,
-       occurred_at, note, sequence, raw_event, created_at
+SELECT id, workspace_id, scope_type, action, actor,
+       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id
 FROM workspace_activity_events
 WHERE workspace_id = $1 AND feature_id = $2 AND task_id = $3
 ORDER BY sequence;
@@ -32,12 +32,12 @@ DO UPDATE SET
     scope_type   = EXCLUDED.scope_type,
     feature_name = EXCLUDED.feature_name,
     action       = EXCLUDED.action,
-    actor       = EXCLUDED.actor,
-    occurred_at = EXCLUDED.occurred_at,
-    note        = EXCLUDED.note,
-    raw_event   = EXCLUDED.raw_event
-RETURNING id, workspace_id, scope_type, feature_id, task_id, action, actor,
-          occurred_at, note, sequence, raw_event, created_at;
+    actor        = EXCLUDED.actor,
+    occurred_at  = EXCLUDED.occurred_at,
+    note         = EXCLUDED.note,
+    raw_event    = EXCLUDED.raw_event
+RETURNING id, workspace_id, scope_type, action, actor,
+          occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id;
 
 -- name: UpsertTaskActivityEvent :one
 -- Targets the partial index: feature_id IS NOT NULL AND task_id IS NOT NULL.
@@ -53,12 +53,12 @@ DO UPDATE SET
     feature_name = EXCLUDED.feature_name,
     task_name    = EXCLUDED.task_name,
     action       = EXCLUDED.action,
-    actor       = EXCLUDED.actor,
-    occurred_at = EXCLUDED.occurred_at,
-    note        = EXCLUDED.note,
-    raw_event   = EXCLUDED.raw_event
-RETURNING id, workspace_id, scope_type, feature_id, task_id, action, actor,
-          occurred_at, note, sequence, raw_event, created_at;
+    actor        = EXCLUDED.actor,
+    occurred_at  = EXCLUDED.occurred_at,
+    note         = EXCLUDED.note,
+    raw_event    = EXCLUDED.raw_event
+RETURNING id, workspace_id, scope_type, action, actor,
+          occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id;
 
 -- name: DeleteAllFeatureActivityEvents :exec
 DELETE FROM workspace_activity_events

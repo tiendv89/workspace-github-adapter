@@ -41,16 +41,23 @@ func parseTimestamp(s string) time.Time {
 
 // workspaceYAML mirrors the relevant fields from workspace.yaml.
 type workspaceYAML struct {
-	Name           string                     `yaml:"name"`
-	Repos          []repoYAML                 `yaml:"repos"`
-	Git            gitYAML                    `yaml:"git"`
-	ManagementRepo string                     `yaml:"management_repo"`
-	Notifications  workspaceNotificationsYAML `yaml:"notifications"`
+	Name           string                          `yaml:"name"`
+	Repos          []repoYAML                      `yaml:"repos"`
+	Git            gitYAML                         `yaml:"git"`
+	ManagementRepo string                          `yaml:"management_repo"`
+	Notifications  workspaceNotificationsYAML      `yaml:"notifications"`
+	ModelPolicy    map[string]modelPhasePolicyYAML `yaml:"model_policy"`
+}
+
+type modelPhasePolicyYAML struct {
+	Allowed []string `yaml:"allowed"`
+	Default string   `yaml:"default"`
 }
 
 type repoYAML struct {
 	ID         string `yaml:"id"`
 	BaseBranch string `yaml:"base_branch"`
+	GitHub     string `yaml:"github"`
 }
 
 type gitYAML struct {
@@ -77,6 +84,7 @@ type featureStatusYAML struct {
 	NextAction    string                 `yaml:"next_action"`
 	History       []activityYAML         `yaml:"history"`
 	Stages        map[string]interface{} `yaml:"stages"`
+	Owner         string                 `yaml:"owner"`
 }
 
 type activityYAML struct {
@@ -238,4 +246,96 @@ func slugify(name string) string {
 	re := regexp.MustCompile(`[^a-z0-9]+`)
 	slug := re.ReplaceAllString(lower, "-")
 	return strings.Trim(slug, "-")
+}
+
+// canonicalModelPhases is the exhaustive list of phases that may appear in model_policy.
+var canonicalModelPhases = []string{
+	"implementation",
+	"self_review",
+	"pr_description",
+	"suggested_next_step",
+	"conflict_resolution",
+}
+
+// parseModelPolicy validates the model_policy block from workspace.yaml and returns a
+// ModelPolicySnapshot. Returns nil when the block is absent. Fails on any structural
+// violation; catalog validation (unknown/inactive model IDs) happens later in the DB layer.
+func parseModelPolicy(raw map[string]modelPhasePolicyYAML) (*domain.ModelPolicySnapshot, *domain.SourceError) {
+	if raw == nil {
+		return nil, nil
+	}
+
+	canonical := make(map[string]struct{}, len(canonicalModelPhases))
+	for _, p := range canonicalModelPhases {
+		canonical[p] = struct{}{}
+	}
+
+	// Reject unknown phase keys.
+	for key := range raw {
+		if _, ok := canonical[key]; !ok {
+			se := domain.NewValidationError(
+				domain.ErrModelPolicyUnknownPhase,
+				fmt.Sprintf("unknown_model_policy_phase: %q", key),
+			)
+			return nil, &se
+		}
+	}
+
+	// All canonical phases must be present.
+	for _, phase := range canonicalModelPhases {
+		if _, ok := raw[phase]; !ok {
+			se := domain.NewValidationError(
+				domain.ErrModelPolicyMissingPhase,
+				fmt.Sprintf("missing_model_policy_phase: %q", phase),
+			)
+			return nil, &se
+		}
+	}
+
+	phases := make(map[string]domain.PhasePolicySnapshot, len(canonicalModelPhases))
+	for _, phase := range canonicalModelPhases {
+		entry := raw[phase]
+
+		if len(entry.Allowed) == 0 {
+			se := domain.NewValidationError(
+				domain.ErrModelPolicyInvalidAllowed,
+				fmt.Sprintf("invalid_model_policy_allowed: %q", phase),
+			)
+			return nil, &se
+		}
+		if entry.Default == "" {
+			se := domain.NewValidationError(
+				domain.ErrModelPolicyInvalidDefault,
+				fmt.Sprintf("invalid_model_policy_default: %q", phase),
+			)
+			return nil, &se
+		}
+
+		// Dedupe allowed list, preserving first-occurrence order.
+		seen := make(map[string]struct{}, len(entry.Allowed))
+		allowed := make([]string, 0, len(entry.Allowed))
+		for _, slug := range entry.Allowed {
+			if _, dup := seen[slug]; dup {
+				continue
+			}
+			seen[slug] = struct{}{}
+			allowed = append(allowed, slug)
+		}
+
+		// default must be in the (deduped) allowed set.
+		if _, ok := seen[entry.Default]; !ok {
+			se := domain.NewValidationError(
+				domain.ErrModelPolicyDefaultNotAllowed,
+				fmt.Sprintf("model_policy_default_not_allowed: %q: %q", phase, entry.Default),
+			)
+			return nil, &se
+		}
+
+		phases[phase] = domain.PhasePolicySnapshot{
+			Allowed: allowed,
+			Default: entry.Default,
+		}
+	}
+
+	return &domain.ModelPolicySnapshot{Phases: phases}, nil
 }

@@ -557,7 +557,7 @@ func (e *recordingEnqueuer) Enqueue(task *asynq.Task, _ ...asynq.Option) (*asynq
 }
 
 type webhookSourceDB struct {
-	src       database.WorkspaceGitHubSource
+	src       database.WorkspaceGithubSource
 	workspace database.Workspace
 }
 
@@ -581,14 +581,14 @@ func (db *webhookSourceDB) QueryRow(_ context.Context, query string, _ ...interf
 }
 
 type webhookSourceRow struct {
-	src database.WorkspaceGitHubSource
+	src database.WorkspaceGithubSource
 }
 
 func (r webhookSourceRow) Scan(dest ...any) error {
 	values := []any{
 		r.src.ID,
 		r.src.WorkspaceID,
-		r.src.RepoURL,
+		r.src.RepoUrl,
 		r.src.RepoOwner,
 		r.src.RepoName,
 		r.src.DefaultBranch,
@@ -638,14 +638,14 @@ type webhookWorkspaceRow struct {
 func (r webhookWorkspaceRow) Scan(dest ...any) error {
 	values := []any{
 		r.workspace.ID,
-		r.workspace.OrganizationID,
 		r.workspace.Slug,
 		r.workspace.Name,
 		r.workspace.ManagementRepoID,
 		r.workspace.BranchPattern,
-		r.workspace.SlackChannelID,
 		r.workspace.CreatedAt,
 		r.workspace.UpdatedAt,
+		r.workspace.SlackChannelID,
+		r.workspace.OrganizationID,
 	}
 	if len(dest) != len(values) {
 		return fmt.Errorf("expected %d scan destinations, got %d", len(values), len(dest))
@@ -683,15 +683,15 @@ func (r webhookWorkspaceRow) Scan(dest ...any) error {
 	return nil
 }
 
-func testGitHubSource(t *testing.T) database.WorkspaceGitHubSource {
+func testGitHubSource(t *testing.T) database.WorkspaceGithubSource {
 	t.Helper()
 	workspaceID := mustPGUUID(t, "11111111-1111-1111-1111-111111111111")
 	sourceID := mustPGUUID(t, "22222222-2222-2222-2222-222222222222")
 	defaultBranch := "main"
-	return database.WorkspaceGitHubSource{
+	return database.WorkspaceGithubSource{
 		ID:            sourceID,
 		WorkspaceID:   workspaceID,
-		RepoURL:       "https://github.com/acme/workspace",
+		RepoUrl:       "https://github.com/acme/workspace",
 		RepoOwner:     "acme",
 		RepoName:      "workspace",
 		DefaultBranch: &defaultBranch,
@@ -704,7 +704,7 @@ func testWorkspace(t *testing.T, branchPattern string) database.Workspace {
 	return testWorkspaceFromID(workspaceID, branchPattern)
 }
 
-func testWorkspaceFromSource(src database.WorkspaceGitHubSource, branchPattern string) database.Workspace {
+func testWorkspaceFromSource(src database.WorkspaceGithubSource, branchPattern string) database.Workspace {
 	return testWorkspaceFromID(src.WorkspaceID, branchPattern)
 }
 

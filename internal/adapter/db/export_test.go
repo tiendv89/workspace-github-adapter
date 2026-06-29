@@ -54,3 +54,8 @@ func RawJSON(s string) json.RawMessage {
 func ExportedUpsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, f domain.FeatureSnapshot) error {
 	return upsertFeatureSnapshot(ctx, q, uid, f)
 }
+
+// ExportedSyncModelPolicy exposes syncModelPolicy for unit testing.
+func ExportedSyncModelPolicy(ctx context.Context, q *database.Queries, uid pgtype.UUID, policy *domain.ModelPolicySnapshot) error {
+	return syncModelPolicy(ctx, q, uid, policy)
+}

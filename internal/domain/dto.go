@@ -148,12 +148,26 @@ type WorkspaceSnapshot struct {
 	Features         []FeatureSnapshot
 	Repos            []RepoEntry
 	SourceErrors     []SourceError
+	ModelPolicy      *ModelPolicySnapshot // nil = no model_policy block in workspace.yaml
 }
 
 // RepoEntry maps to workspace.yaml repos[].
 type RepoEntry struct {
 	RepoID     string `json:"repo_id"`
 	BaseBranch string `json:"base_branch,omitempty"`
+	RepoURL    string `json:"repo_url,omitempty"`
+}
+
+// ModelPolicySnapshot holds the parsed model_policy block from workspace.yaml.
+// A nil value means no model_policy block was present.
+type ModelPolicySnapshot struct {
+	Phases map[string]PhasePolicySnapshot
+}
+
+// PhasePolicySnapshot holds the allowed models and default for a single phase.
+type PhasePolicySnapshot struct {
+	Allowed []string
+	Default string
 }
 
 // FeatureSnapshot is the parsed representation of a single feature directory.
@@ -166,6 +180,7 @@ type FeatureSnapshot struct {
 	Stages       map[string]interface{}
 	SourcePath   string
 	SourceHash   string
+	Owner        string
 	Documents    []DocumentSnapshot
 	Tasks        []TaskSnapshot
 	Activity     []ActivityEvent
