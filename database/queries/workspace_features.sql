@@ -28,9 +28,27 @@ SELECT feature_uuid, $1, feature_uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(
 FROM feature_input
 ON CONFLICT (workspace_id, feature_name) DO UPDATE SET
     title          = EXCLUDED.title,
-    feature_status = EXCLUDED.feature_status,
-    current_stage  = EXCLUDED.current_stage,
-    next_action    = EXCLUDED.next_action,
+    feature_status = CASE
+        WHEN workspace_features.owner = 'go'
+             AND workspace_features.feature_status IN ('in_implementation', 'in_handoff')
+             AND EXCLUDED.feature_status NOT IN ('cancelled', 'done')
+        THEN workspace_features.feature_status
+        ELSE EXCLUDED.feature_status
+    END,
+    current_stage  = CASE
+        WHEN workspace_features.owner = 'go'
+             AND workspace_features.feature_status IN ('in_implementation', 'in_handoff')
+             AND EXCLUDED.feature_status NOT IN ('cancelled', 'done')
+        THEN workspace_features.current_stage
+        ELSE EXCLUDED.current_stage
+    END,
+    next_action    = CASE
+        WHEN workspace_features.owner = 'go'
+             AND workspace_features.feature_status IN ('in_implementation', 'in_handoff')
+             AND EXCLUDED.feature_status NOT IN ('cancelled', 'done')
+        THEN workspace_features.next_action
+        ELSE EXCLUDED.next_action
+    END,
     stages         = EXCLUDED.stages,
     source_path    = EXCLUDED.source_path,
     source_hash    = EXCLUDED.source_hash,
