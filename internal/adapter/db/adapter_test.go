@@ -719,3 +719,450 @@ func TestOwnerFilter_UpsertFeatureSQL(t *testing.T) {
 		t.Error("no INSERT INTO workspace_features SQL captured — check test setup")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Owner-scope CASE guard tests — T2 (go-orchestrator-autonomy).
+//
+// These tests verify that the UpsertWorkspaceFeature SQL contains the CASE
+// guard that prevents the adapter from clobbering orchestrator-owned
+// feature_status/current_stage/next_action values (in_implementation,
+// in_handoff) for owner='go' rows unless the incoming status is
+// cancelled or done.
+// ---------------------------------------------------------------------------
+
+// TestOwnerScope_UpsertFeatureSQL_HasCaseGuard verifies that the generated SQL
+// contains the CASE expression that guards owner='go' protected statuses.
+func TestOwnerScope_UpsertFeatureSQL_HasCaseGuard(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	fake := &sqlCapturingDB{featureID: featureID}
+	q := database.New(fake)
+
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID:  "test-feature",
+		Title:      "Test Feature",
+		SourcePath: "docs/features/test-feature/status.yaml",
+		Status:     "ready_for_implementation",
+		Owner:      "go",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	requiredFragments := []string{
+		"workspace_features.owner = 'go'",
+		"workspace_features.feature_status IN ('in_implementation', 'in_handoff')",
+		"EXCLUDED.feature_status NOT IN ('cancelled', 'done')",
+		"THEN workspace_features.feature_status",
+		"THEN workspace_features.current_stage",
+		"THEN workspace_features.next_action",
+	}
+
+	var found bool
+	for _, sql := range fake.queryRowQueries {
+		if !strings.Contains(sql, "INSERT INTO workspace_features") {
+			continue
+		}
+		found = true
+		for _, frag := range requiredFragments {
+			if !strings.Contains(sql, frag) {
+				t.Errorf("UpsertWorkspaceFeature SQL missing required fragment %q;\ngot SQL:\n%s", frag, sql)
+			}
+		}
+	}
+	if !found {
+		t.Error("no INSERT INTO workspace_features SQL captured — check test setup")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// caseGuardDB — a mock that simulates the CASE guard behavior of
+// UpsertWorkspaceFeature without a live database.
+//
+// When QueryRow is called for the upsert, it applies the same CASE logic as
+// the SQL: if owner='go' AND feature_status ∈ {in_implementation, in_handoff}
+// AND incoming NOT IN {cancelled, done}, keep the existing values; else sync.
+// ---------------------------------------------------------------------------
+
+// caseGuardFeature holds the simulated DB state for one feature row.
+type caseGuardFeature struct {
+	owner         string
+	featureStatus string
+	currentStage  string
+	nextAction    string
+}
+
+// caseGuardDB intercepts the UpsertWorkspaceFeature QueryRow call, applies the
+// CASE guard logic in memory, and records what was "written" to the feature row.
+type caseGuardDB struct {
+	featureID pgtype.UUID
+	// existing is the current DB state (nil = row does not exist yet).
+	existing *caseGuardFeature
+	// written holds the result of the last upsert after the CASE guard ran.
+	written *caseGuardFeature
+}
+
+func (c *caseGuardDB) Exec(_ context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
+func (c *caseGuardDB) Query(_ context.Context, _ string, _ ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c *caseGuardDB) QueryRow(_ context.Context, sql string, args ...interface{}) pgx.Row {
+	if !strings.Contains(sql, "INSERT INTO workspace_features") {
+		return &caseGuardNilRow{}
+	}
+
+	// Parameter positions per the query:
+	//   $1 workspace_id, $2 feature_name, $3 title,
+	//   $4 feature_status, $5 current_stage, $6 next_action,
+	//   $7 stages, $8 source_path, $9 source_hash, $10 owner
+	incomingStatus := derefArgStr(args, 3)
+	incomingStage := derefArgStr(args, 4)
+	incomingAction := derefArgStr(args, 5)
+	incomingOwner := derefArgStr(args, 9)
+
+	resultStatus := incomingStatus
+	resultStage := incomingStage
+	resultAction := incomingAction
+	resultOwner := incomingOwner
+
+	if c.existing != nil {
+		// Simulate COALESCE(workspace_features.owner, EXCLUDED.owner).
+		if c.existing.owner != "" {
+			resultOwner = c.existing.owner
+		}
+
+		// Apply the CASE guard.
+		protected := c.existing.owner == "go" &&
+			(c.existing.featureStatus == "in_implementation" || c.existing.featureStatus == "in_handoff") &&
+			(incomingStatus != "cancelled" && incomingStatus != "done")
+		if protected {
+			resultStatus = c.existing.featureStatus
+			resultStage = c.existing.currentStage
+			resultAction = c.existing.nextAction
+		}
+	}
+
+	result := &caseGuardFeature{
+		owner:         resultOwner,
+		featureStatus: resultStatus,
+		currentStage:  resultStage,
+		nextAction:    resultAction,
+	}
+	c.written = result
+
+	return &caseGuardRow{featureID: c.featureID, feature: result}
+}
+
+// derefArgStr extracts args[i] as string (handles *string and string).
+func derefArgStr(args []interface{}, i int) string {
+	if i >= len(args) {
+		return ""
+	}
+	switch v := args[i].(type) {
+	case *string:
+		if v == nil {
+			return ""
+		}
+		return *v
+	case string:
+		return v
+	}
+	return ""
+}
+
+type caseGuardRow struct {
+	featureID pgtype.UUID
+	feature   *caseGuardFeature
+}
+
+func (r *caseGuardRow) Scan(dest ...any) error {
+	// UpsertWorkspaceFeature RETURNING: id, workspace_id, title, feature_status,
+	// current_stage, next_action, stages, source_path, source_hash, created_at,
+	// updated_at, feature_name, feature_id, owner, init_pr_url, init_pr_merged
+	// Fill only what tests assert on; leave rest as zero values.
+	if len(dest) < 14 {
+		return fmt.Errorf("caseGuardRow.Scan: need ≥14 dest, got %d", len(dest))
+	}
+	if d, ok := dest[0].(*pgtype.UUID); ok {
+		*d = r.featureID
+	}
+	if d, ok := dest[1].(*pgtype.UUID); ok {
+		*d = r.featureID
+	}
+	if d, ok := dest[3].(**string); ok && r.feature != nil {
+		s := r.feature.featureStatus
+		*d = &s
+	}
+	if d, ok := dest[4].(**string); ok && r.feature != nil {
+		s := r.feature.currentStage
+		*d = &s
+	}
+	if d, ok := dest[5].(**string); ok && r.feature != nil {
+		s := r.feature.nextAction
+		*d = &s
+	}
+	if d, ok := dest[12].(*pgtype.UUID); ok {
+		*d = r.featureID
+	}
+	if d, ok := dest[13].(**string); ok && r.feature != nil {
+		s := r.feature.owner
+		*d = &s
+	}
+	return nil
+}
+
+type caseGuardNilRow struct{}
+
+func (r *caseGuardNilRow) Scan(_ ...any) error { return pgx.ErrNoRows }
+
+// TestOwnerScope_GoFeature_ProtectsInImplementation verifies that syncing a
+// go-owned feature that is in_implementation does NOT overwrite feature_status,
+// current_stage, or next_action when the incoming value is a design-phase status.
+func TestOwnerScope_GoFeature_ProtectsInImplementation(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	mock := &caseGuardDB{
+		featureID: featureID,
+		existing: &caseGuardFeature{
+			owner:         "go",
+			featureStatus: "in_implementation",
+			currentStage:  "handoff",
+			nextAction:    "waiting for orchestrator",
+		},
+	}
+	q := database.New(mock)
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+	// Adapter syncs status.yaml which reports ready_for_implementation —
+	// orchestrator has already advanced to in_implementation; guard must hold.
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID:    "go-feature",
+		Title:        "Go Feature",
+		Status:       "ready_for_implementation",
+		CurrentStage: "tasks",
+		NextAction:   "run tasks",
+		Owner:        "go",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	if mock.written == nil {
+		t.Fatal("no upsert was executed")
+	}
+	if mock.written.featureStatus != "in_implementation" {
+		t.Errorf("feature_status: got %q, want %q (guard must hold)", mock.written.featureStatus, "in_implementation")
+	}
+	if mock.written.currentStage != "handoff" {
+		t.Errorf("current_stage: got %q, want %q (guard must hold)", mock.written.currentStage, "handoff")
+	}
+	if mock.written.nextAction != "waiting for orchestrator" {
+		t.Errorf("next_action: got %q, want %q (guard must hold)", mock.written.nextAction, "waiting for orchestrator")
+	}
+}
+
+// TestOwnerScope_GoFeature_ProtectsInHandoff verifies that syncing a go-owned
+// feature that is in_handoff does NOT overwrite the orchestrator-owned fields.
+func TestOwnerScope_GoFeature_ProtectsInHandoff(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	mock := &caseGuardDB{
+		featureID: featureID,
+		existing: &caseGuardFeature{
+			owner:         "go",
+			featureStatus: "in_handoff",
+			currentStage:  "handoff",
+			nextAction:    "merging handoff PRs",
+		},
+	}
+	q := database.New(mock)
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID:    "go-feature",
+		Title:        "Go Feature",
+		Status:       "in_implementation",
+		CurrentStage: "implementation",
+		NextAction:   "run tasks",
+		Owner:        "go",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	if mock.written == nil {
+		t.Fatal("no upsert was executed")
+	}
+	if mock.written.featureStatus != "in_handoff" {
+		t.Errorf("feature_status: got %q, want %q (guard must hold)", mock.written.featureStatus, "in_handoff")
+	}
+}
+
+// TestOwnerScope_GoFeature_AllowsCancelled verifies that cancelled overrides
+// the guard even when the current status is in_implementation.
+func TestOwnerScope_GoFeature_AllowsCancelled(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	mock := &caseGuardDB{
+		featureID: featureID,
+		existing: &caseGuardFeature{
+			owner:         "go",
+			featureStatus: "in_implementation",
+			currentStage:  "handoff",
+			nextAction:    "waiting",
+		},
+	}
+	q := database.New(mock)
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID: "go-feature",
+		Title:     "Go Feature",
+		Status:    "cancelled",
+		Owner:     "go",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	if mock.written == nil {
+		t.Fatal("no upsert was executed")
+	}
+	if mock.written.featureStatus != "cancelled" {
+		t.Errorf("feature_status: got %q, want %q (cancelled must bypass guard)", mock.written.featureStatus, "cancelled")
+	}
+}
+
+// TestOwnerScope_GoFeature_AllowsDone verifies that done overrides the guard
+// even when the current status is in_handoff.
+func TestOwnerScope_GoFeature_AllowsDone(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	mock := &caseGuardDB{
+		featureID: featureID,
+		existing: &caseGuardFeature{
+			owner:         "go",
+			featureStatus: "in_handoff",
+			currentStage:  "handoff",
+			nextAction:    "merging",
+		},
+	}
+	q := database.New(mock)
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID: "go-feature",
+		Title:     "Go Feature",
+		Status:    "done",
+		Owner:     "go",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	if mock.written == nil {
+		t.Fatal("no upsert was executed")
+	}
+	if mock.written.featureStatus != "done" {
+		t.Errorf("feature_status: got %q, want %q (done must bypass guard)", mock.written.featureStatus, "done")
+	}
+}
+
+// TestOwnerScope_GoFeature_SyncsDesignPhaseStatuses verifies that design-phase
+// statuses (in_design, in_tdd, ready_for_implementation) are always synced when
+// the current DB value is also a design-phase status (guard condition not met).
+func TestOwnerScope_GoFeature_SyncsDesignPhaseStatuses(t *testing.T) {
+	cases := []struct {
+		existing string
+		incoming string
+	}{
+		{"in_design", "in_tdd"},
+		{"in_tdd", "ready_for_implementation"},
+		{"ready_for_implementation", "in_design"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.existing+"->"+tc.incoming, func(t *testing.T) {
+			featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+			mock := &caseGuardDB{
+				featureID: featureID,
+				existing: &caseGuardFeature{
+					owner:         "go",
+					featureStatus: tc.existing,
+					currentStage:  "product_spec",
+					nextAction:    "approve",
+				},
+			}
+			q := database.New(mock)
+			workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+			err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+				FeatureID:    "go-feature",
+				Title:        "Go Feature",
+				Status:       tc.incoming,
+				CurrentStage: "technical_design",
+				NextAction:   "run tech-lead",
+				Owner:        "go",
+			})
+			if err != nil {
+				t.Fatalf("upsertFeatureSnapshot: %v", err)
+			}
+
+			if mock.written == nil {
+				t.Fatal("no upsert was executed")
+			}
+			if mock.written.featureStatus != tc.incoming {
+				t.Errorf("feature_status: got %q, want %q (design-phase must sync)", mock.written.featureStatus, tc.incoming)
+			}
+		})
+	}
+}
+
+// TestOwnerScope_NonGoFeature_AlwaysSyncs verifies that a non-go-owned feature
+// (owner='' or absent) always has its status overwritten regardless of value.
+func TestOwnerScope_NonGoFeature_AlwaysSyncs(t *testing.T) {
+	cases := []struct {
+		owner    string
+		existing string
+		incoming string
+	}{
+		{"", "in_implementation", "ready_for_implementation"},
+		{"ts", "in_handoff", "in_design"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run("owner="+tc.owner+"_"+tc.existing+"->"+tc.incoming, func(t *testing.T) {
+			featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+			mock := &caseGuardDB{
+				featureID: featureID,
+				existing: &caseGuardFeature{
+					owner:         tc.owner,
+					featureStatus: tc.existing,
+					currentStage:  "handoff",
+					nextAction:    "merging",
+				},
+			}
+			q := database.New(mock)
+			workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+			err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+				FeatureID: "ts-feature",
+				Title:     "TS Feature",
+				Status:    tc.incoming,
+				Owner:     tc.owner,
+			})
+			if err != nil {
+				t.Fatalf("upsertFeatureSnapshot: %v", err)
+			}
+
+			if mock.written == nil {
+				t.Fatal("no upsert was executed")
+			}
+			if mock.written.featureStatus != tc.incoming {
+				t.Errorf("feature_status: got %q, want %q (non-go must always sync)", mock.written.featureStatus, tc.incoming)
+			}
+		})
+	}
+}
