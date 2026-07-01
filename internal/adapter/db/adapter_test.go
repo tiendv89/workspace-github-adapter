@@ -1082,7 +1082,6 @@ func TestOwnerScope_GoFeature_SyncsDesignPhaseStatuses(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.existing+"->"+tc.incoming, func(t *testing.T) {
 			featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
 			mock := &caseGuardDB{
@@ -1120,7 +1119,7 @@ func TestOwnerScope_GoFeature_SyncsDesignPhaseStatuses(t *testing.T) {
 }
 
 // TestOwnerScope_NonGoFeature_AlwaysSyncs verifies that a non-go-owned feature
-// (owner='' or absent) always has its status overwritten regardless of value.
+// (owner=” or absent) always has its status overwritten regardless of value.
 func TestOwnerScope_NonGoFeature_AlwaysSyncs(t *testing.T) {
 	cases := []struct {
 		owner    string
@@ -1132,7 +1131,6 @@ func TestOwnerScope_NonGoFeature_AlwaysSyncs(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run("owner="+tc.owner+"_"+tc.existing+"->"+tc.incoming, func(t *testing.T) {
 			featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
 			mock := &caseGuardDB{
