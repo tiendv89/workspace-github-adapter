@@ -166,7 +166,7 @@ func (a *Adapter) GetFeature(ctx context.Context, workspaceID, featureID string)
 
 	f, err := a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{
 		WorkspaceID: uid,
-		FeatureID:   featureUUID,
+		ID:          featureUUID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -263,7 +263,7 @@ func (a *Adapter) GetTask(ctx context.Context, workspaceID, featureID, taskID st
 	t, err = a.q.GetWorkspaceTask(ctx, database.GetWorkspaceTaskParams{
 		WorkspaceID: uid,
 		FeatureID:   featureUUID,
-		TaskID:      taskUUID,
+		ID:          taskUUID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -445,7 +445,7 @@ func (a *Adapter) SaveTaskSnapshot(ctx context.Context, workspaceID string, snap
 		if upsertErr != nil {
 			return fmt.Errorf("upsert placeholder feature for task sync %s: %w", snap.FeatureID, upsertErr)
 		}
-		featureUUID = feature.FeatureID
+		featureUUID = feature.ID
 	}
 
 	tx, err := a.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -738,13 +738,10 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 		return fmt.Errorf("upsert feature %s: %w", f.FeatureID, err)
 	}
 
-	// All feature-child rows key on feature_id (the business-key UUID), NOT the
-	// surrogate id, because that is what the workflow-backend reader and the
-	// adapter's own detail queries filter by — and the two differ for a feature
-	// first created in the UI (feature_id has a gen_random_uuid() default distinct
-	// from id). workspace_tasks already FKs feature_id (migration 00016) and
-	// documents follow (migration 00018); activity has no FK.
-	featureRef := featureRow.FeatureID
+	// All feature-child rows (workspace_tasks, workspace_feature_documents) key on
+	// feature_id which now references workspace_features(id) — the single identity
+	// column after migration 00022. featureRow.ID is both the PK and the FK target.
+	featureRef := featureRow.ID
 
 	// Upsert documents.
 	docTypes := make([]string, 0, len(f.Documents))
@@ -795,8 +792,8 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 }
 
 // upsertTaskSnapshot writes a task and its activity. featureRef is the feature's
-// business-key feature_id UUID (see upsertFeatureSnapshot) — the value all
-// feature-child tables key on.
+// id (the sole identity column after migration 00022) — the value all
+// feature-child tables key on via the feature_id FK.
 func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureRef pgtype.UUID, featureName string, t domain.TaskSnapshot) error {
 	dependsOn, err := json.Marshal(t.DependsOn)
 	if err != nil {
@@ -836,7 +833,7 @@ func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUI
 		return fmt.Errorf("upsert task %s/%s: %w", featureName, t.TaskID, err)
 	}
 
-	// Task-level activity keys on the same feature_id business key.
+	// Task-level activity keys on the same feature_id reference.
 	if err := upsertTaskActivity(ctx, q, uid, featureRef, featureName, taskRow.ID, t); err != nil {
 		return err
 	}
@@ -1017,7 +1014,7 @@ func rowToFeatureSummary(f database.WorkspaceFeature, tasks []database.Workspace
 
 	fs := domain.FeatureSummary{
 		ID:          uuidStr(f.ID),
-		FeatureID:   uuidStr(f.FeatureID),
+		FeatureID:   uuidStr(f.ID),
 		FeatureName: f.FeatureName,
 		Title:       f.Title,
 		UpdatedAt:   f.UpdatedAt.Time,
@@ -1036,7 +1033,7 @@ func rowToFeatureSummary(f database.WorkspaceFeature, tasks []database.Workspace
 func rowToTaskSummary(t database.WorkspaceTask) domain.TaskSummary {
 	ts := domain.TaskSummary{
 		ID:          uuidStr(t.ID),
-		TaskID:      uuidStr(t.TaskID),
+		TaskID:      uuidStr(t.ID),
 		TaskName:    t.TaskName,
 		FeatureID:   uuidStr(t.FeatureID),
 		FeatureName: t.FeatureName,
@@ -1138,19 +1135,16 @@ func parseUUID(s string) (pgtype.UUID, error) {
 	return parseUUIDField(s, "workspace_id")
 }
 
-// resolveFeature maps a feature identifier (its business-key feature_id UUID or
-// its slug name) to the feature_id UUID. All feature-child tables key on
-// feature_id (the public business key), NOT the surrogate id — these differ for
-// features first created in the UI, where feature_id has a gen_random_uuid()
-// default distinct from id.
+// resolveFeature maps a feature identifier (a UUID or slug name) to the feature's id.
+// After migration 00022, id is the sole identity column on workspace_features.
 func (a *Adapter) resolveFeature(ctx context.Context, workspaceID pgtype.UUID, featureIdentifier string) (pgtype.UUID, error) {
 	if featureUUID, err := parseUUIDField(featureIdentifier, "feature_id"); err == nil {
 		feature, err := a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{
 			WorkspaceID: workspaceID,
-			FeatureID:   featureUUID,
+			ID:          featureUUID,
 		})
 		if err == nil {
-			return feature.FeatureID, nil
+			return feature.ID, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return pgtype.UUID{}, dbErr("get feature", err)
@@ -1164,7 +1158,7 @@ func (a *Adapter) resolveFeature(ctx context.Context, workspaceID pgtype.UUID, f
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
-	return feature.FeatureID, nil
+	return feature.ID, nil
 }
 
 func (a *Adapter) resolveTask(ctx context.Context, workspaceID, featureID pgtype.UUID, taskIdentifier string) (database.WorkspaceTask, pgtype.UUID, error) {
@@ -1172,7 +1166,7 @@ func (a *Adapter) resolveTask(ctx context.Context, workspaceID, featureID pgtype
 		task, err := a.q.GetWorkspaceTask(ctx, database.GetWorkspaceTaskParams{
 			WorkspaceID: workspaceID,
 			FeatureID:   featureID,
-			TaskID:      taskUUID,
+			ID:          taskUUID,
 		})
 		if err == nil {
 			return task, task.ID, nil

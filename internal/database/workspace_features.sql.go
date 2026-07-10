@@ -31,18 +31,18 @@ func (q *Queries) DeleteWorkspaceFeaturesNotIn(ctx context.Context, arg DeleteWo
 const getWorkspaceFeature = `-- name: GetWorkspaceFeature :one
 SELECT id, workspace_id, title, feature_status, current_stage, next_action,
        stages, source_path, source_hash, created_at, updated_at,
-       feature_name, feature_id, owner, init_pr_url, init_pr_merged
+       feature_name, owner, init_pr_url, init_pr_merged
 FROM workspace_features
-WHERE workspace_id = $1 AND feature_id = $2
+WHERE workspace_id = $1 AND id = $2
 `
 
 type GetWorkspaceFeatureParams struct {
 	WorkspaceID pgtype.UUID `db:"workspace_id" json:"workspace_id"`
-	FeatureID   pgtype.UUID `db:"feature_id" json:"feature_id"`
+	ID          pgtype.UUID `db:"id" json:"id"`
 }
 
 func (q *Queries) GetWorkspaceFeature(ctx context.Context, arg GetWorkspaceFeatureParams) (WorkspaceFeature, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceFeature, arg.WorkspaceID, arg.FeatureID)
+	row := q.db.QueryRow(ctx, getWorkspaceFeature, arg.WorkspaceID, arg.ID)
 	var i WorkspaceFeature
 	err := row.Scan(
 		&i.ID,
@@ -57,7 +57,6 @@ func (q *Queries) GetWorkspaceFeature(ctx context.Context, arg GetWorkspaceFeatu
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FeatureName,
-		&i.FeatureID,
 		&i.Owner,
 		&i.InitPrUrl,
 		&i.InitPrMerged,
@@ -68,7 +67,7 @@ func (q *Queries) GetWorkspaceFeature(ctx context.Context, arg GetWorkspaceFeatu
 const listWorkspaceFeatures = `-- name: ListWorkspaceFeatures :many
 SELECT id, workspace_id, title, feature_status, current_stage, next_action,
        stages, source_path, source_hash, created_at, updated_at,
-       feature_name, feature_id, owner, init_pr_url, init_pr_merged
+       feature_name, owner, init_pr_url, init_pr_merged
 FROM workspace_features
 WHERE workspace_id = $1
 ORDER BY updated_at DESC
@@ -96,7 +95,6 @@ func (q *Queries) ListWorkspaceFeatures(ctx context.Context, workspaceID pgtype.
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FeatureName,
-			&i.FeatureID,
 			&i.Owner,
 			&i.InitPrUrl,
 			&i.InitPrMerged,
@@ -119,10 +117,10 @@ WITH feature_input AS (
     ) AS feature_uuid
 )
 INSERT INTO workspace_features (
-    id, workspace_id, feature_id, feature_name, title, feature_status, current_stage, next_action,
+    id, workspace_id, feature_name, title, feature_status, current_stage, next_action,
     stages, source_path, source_hash, owner, created_at, updated_at
 )
-SELECT feature_uuid, $1, feature_uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now()
+SELECT feature_uuid, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now()
 FROM feature_input
 ON CONFLICT (workspace_id, feature_name) DO UPDATE SET
     title          = EXCLUDED.title,
@@ -151,7 +149,7 @@ ON CONFLICT (workspace_id, feature_name) DO UPDATE SET
     updated_at     = now()
 RETURNING id, workspace_id, title, feature_status, current_stage, next_action,
           stages, source_path, source_hash, created_at, updated_at,
-          feature_name, feature_id, owner, init_pr_url, init_pr_merged
+          feature_name, owner, init_pr_url, init_pr_merged
 `
 
 type UpsertWorkspaceFeatureParams struct {
@@ -194,7 +192,6 @@ func (q *Queries) UpsertWorkspaceFeature(ctx context.Context, arg UpsertWorkspac
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FeatureName,
-		&i.FeatureID,
 		&i.Owner,
 		&i.InitPrUrl,
 		&i.InitPrMerged,
