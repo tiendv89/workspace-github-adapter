@@ -1,7 +1,11 @@
 version: "2"
 sql:
   - engine: "postgresql"
-    schema: "../workflow-backend/migrations"
+    # Consolidated schema snapshot (database/schema/schema.sql), vendored from
+    # workflow-backend so `sqlc generate` is reproducible and isn't silently
+    # broken by unrelated schema changes landing in the sibling repo. See the
+    # header of that file for how to refresh it.
+    schema: "database/schema"
     queries: "database/queries"
     gen:
       go:

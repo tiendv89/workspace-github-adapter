@@ -29,7 +29,8 @@ func (q *Queries) DeleteAllFeatureActivityEvents(ctx context.Context, arg Delete
 
 const listActivityEvents = `-- name: ListActivityEvents :many
 SELECT id, workspace_id, scope_type, action, actor,
-       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id
+       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id,
+       actor_id, enriched
 FROM workspace_activity_events
 WHERE workspace_id = $1
 ORDER BY occurred_at DESC, sequence DESC
@@ -59,6 +60,8 @@ func (q *Queries) ListActivityEvents(ctx context.Context, workspaceID pgtype.UUI
 			&i.TaskName,
 			&i.FeatureID,
 			&i.TaskID,
+			&i.ActorID,
+			&i.Enriched,
 		); err != nil {
 			return nil, err
 		}
@@ -72,7 +75,8 @@ func (q *Queries) ListActivityEvents(ctx context.Context, workspaceID pgtype.UUI
 
 const listFeatureActivityEvents = `-- name: ListFeatureActivityEvents :many
 SELECT id, workspace_id, scope_type, action, actor,
-       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id
+       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id,
+       actor_id, enriched
 FROM workspace_activity_events
 WHERE workspace_id = $1 AND feature_id = $2
 ORDER BY occurred_at DESC, sequence DESC
@@ -107,6 +111,8 @@ func (q *Queries) ListFeatureActivityEvents(ctx context.Context, arg ListFeature
 			&i.TaskName,
 			&i.FeatureID,
 			&i.TaskID,
+			&i.ActorID,
+			&i.Enriched,
 		); err != nil {
 			return nil, err
 		}
@@ -120,7 +126,8 @@ func (q *Queries) ListFeatureActivityEvents(ctx context.Context, arg ListFeature
 
 const listTaskActivityEvents = `-- name: ListTaskActivityEvents :many
 SELECT id, workspace_id, scope_type, action, actor,
-       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id
+       occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id,
+       actor_id, enriched
 FROM workspace_activity_events
 WHERE workspace_id = $1 AND feature_id = $2 AND task_id = $3
 ORDER BY sequence
@@ -156,6 +163,8 @@ func (q *Queries) ListTaskActivityEvents(ctx context.Context, arg ListTaskActivi
 			&i.TaskName,
 			&i.FeatureID,
 			&i.TaskID,
+			&i.ActorID,
+			&i.Enriched,
 		); err != nil {
 			return nil, err
 		}
@@ -184,7 +193,8 @@ DO UPDATE SET
     note         = EXCLUDED.note,
     raw_event    = EXCLUDED.raw_event
 RETURNING id, workspace_id, scope_type, action, actor,
-          occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id
+          occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id,
+          actor_id, enriched
 `
 
 type UpsertFeatureActivityEventParams struct {
@@ -230,6 +240,8 @@ func (q *Queries) UpsertFeatureActivityEvent(ctx context.Context, arg UpsertFeat
 		&i.TaskName,
 		&i.FeatureID,
 		&i.TaskID,
+		&i.ActorID,
+		&i.Enriched,
 	)
 	return i, err
 }
@@ -252,7 +264,8 @@ DO UPDATE SET
     note         = EXCLUDED.note,
     raw_event    = EXCLUDED.raw_event
 RETURNING id, workspace_id, scope_type, action, actor,
-          occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id
+          occurred_at, note, sequence, raw_event, created_at, feature_name, task_name, feature_id, task_id,
+          actor_id, enriched
 `
 
 type UpsertTaskActivityEventParams struct {
@@ -302,6 +315,8 @@ func (q *Queries) UpsertTaskActivityEvent(ctx context.Context, arg UpsertTaskAct
 		&i.TaskName,
 		&i.FeatureID,
 		&i.TaskID,
+		&i.ActorID,
+		&i.Enriched,
 	)
 	return i, err
 }

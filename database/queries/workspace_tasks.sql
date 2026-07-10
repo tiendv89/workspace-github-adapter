@@ -1,7 +1,10 @@
 -- name: ListFeatureTasks :many
 SELECT id, workspace_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
-       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner
+       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner,
+       dispatch_handle, dispatch_nonce, dispatched_at, reenqueue_attempts,
+       review_incomplete_count, max_turns_retry_count, rebase_attempts,
+       conflict_state, dispatch_kind, blocked_from_status, blocked_details
 FROM workspace_tasks
 WHERE workspace_id = $1 AND feature_id = $2
 ORDER BY CASE WHEN task_name::text ~ '^T[0-9]+$' THEN substring(task_name::text from 2)::int END ASC NULLS LAST, task_name::text ASC;
@@ -9,7 +12,10 @@ ORDER BY CASE WHEN task_name::text ~ '^T[0-9]+$' THEN substring(task_name::text 
 -- name: ListWorkspaceTasks :many
 SELECT id, workspace_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
-       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner
+       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner,
+       dispatch_handle, dispatch_nonce, dispatched_at, reenqueue_attempts,
+       review_incomplete_count, max_turns_retry_count, rebase_attempts,
+       conflict_state, dispatch_kind, blocked_from_status, blocked_details
 FROM workspace_tasks
 WHERE workspace_id = $1
 ORDER BY feature_name, CASE WHEN task_name::text ~ '^T[0-9]+$' THEN substring(task_name::text from 2)::int END ASC NULLS LAST, task_name::text ASC;
@@ -17,7 +23,10 @@ ORDER BY feature_name, CASE WHEN task_name::text ~ '^T[0-9]+$' THEN substring(ta
 -- name: GetWorkspaceTask :one
 SELECT id, workspace_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
-       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner
+       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner,
+       dispatch_handle, dispatch_nonce, dispatched_at, reenqueue_attempts,
+       review_incomplete_count, max_turns_retry_count, rebase_attempts,
+       conflict_state, dispatch_kind, blocked_from_status, blocked_details
 FROM workspace_tasks
 WHERE workspace_id = $1 AND feature_id = $2 AND task_id = $3;
 
@@ -52,7 +61,10 @@ ON CONFLICT (workspace_id, feature_id, task_name) DO UPDATE SET
     updated_at     = now()
 RETURNING id, workspace_id, title, repo, status, depends_on,
           blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
-          created_at, updated_at, feature_name, feature_id, task_name, task_id, owner;
+          created_at, updated_at, feature_name, feature_id, task_name, task_id, owner,
+          dispatch_handle, dispatch_nonce, dispatched_at, reenqueue_attempts,
+          review_incomplete_count, max_turns_retry_count, rebase_attempts,
+          conflict_state, dispatch_kind, blocked_from_status, blocked_details;
 
 -- name: DeleteFeatureTasksNotIn :exec
 DELETE FROM workspace_tasks

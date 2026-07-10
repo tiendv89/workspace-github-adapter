@@ -157,6 +157,4 @@ Lint:
 ```bash
 golangci-lint run
 ```
-
-## TODO
 - [ ] Fix generated code issue with `sqlc generate`.

@@ -46,6 +46,8 @@ type WorkspaceActivityEvent struct {
 	TaskName    *string            `db:"task_name" json:"task_name"`
 	FeatureID   pgtype.UUID        `db:"feature_id" json:"feature_id"`
 	TaskID      pgtype.UUID        `db:"task_id" json:"task_id"`
+	ActorID     *string            `db:"actor_id" json:"actor_id"`
+	Enriched    bool               `db:"enriched" json:"enriched"`
 }
 
 type WorkspaceFeature struct {
@@ -77,6 +79,34 @@ type WorkspaceFeatureDocument struct {
 	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 	FeatureName  string             `db:"feature_name" json:"feature_name"`
 	FeatureID    pgtype.UUID        `db:"feature_id" json:"feature_id"`
+}
+
+type WorkspaceFeatureHandoff struct {
+	ID             pgtype.UUID        `db:"id" json:"id"`
+	WorkspaceID    pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
+	FeatureID      pgtype.UUID        `db:"feature_id" json:"feature_id"`
+	MgmtPrUrl      *string            `db:"mgmt_pr_url" json:"mgmt_pr_url"`
+	Status         string             `db:"status" json:"status"`
+	CreateAttempts int32              `db:"create_attempts" json:"create_attempts"`
+	CreatedAt      pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	FinalizedAt    pgtype.Timestamptz `db:"finalized_at" json:"finalized_at"`
+}
+
+type WorkspaceFeatureHandoffPr struct {
+	ID                         pgtype.UUID        `db:"id" json:"id"`
+	HandoffID                  pgtype.UUID        `db:"handoff_id" json:"handoff_id"`
+	Repo                       string             `db:"repo" json:"repo"`
+	PrUrl                      *string            `db:"pr_url" json:"pr_url"`
+	Status                     string             `db:"status" json:"status"`
+	ConflictState              string             `db:"conflict_state" json:"conflict_state"`
+	ConflictResolutionAttempts int32              `db:"conflict_resolution_attempts" json:"conflict_resolution_attempts"`
+	DispatchHandle             *string            `db:"dispatch_handle" json:"dispatch_handle"`
+	DispatchNonce              *string            `db:"dispatch_nonce" json:"dispatch_nonce"`
+	DispatchedAt               pgtype.Timestamptz `db:"dispatched_at" json:"dispatched_at"`
+	ReenqueueAttempts          int32              `db:"reenqueue_attempts" json:"reenqueue_attempts"`
+	CreatedAt                  pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 }
 
 type WorkspaceGithubSource struct {
@@ -129,24 +159,35 @@ type WorkspaceSyncRun struct {
 }
 
 type WorkspaceTask struct {
-	ID            pgtype.UUID        `db:"id" json:"id"`
-	WorkspaceID   pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
-	Title         string             `db:"title" json:"title"`
-	Repo          *string            `db:"repo" json:"repo"`
-	Status        *string            `db:"status" json:"status"`
-	DependsOn     json.RawMessage    `db:"depends_on" json:"depends_on"`
-	BlockedReason *string            `db:"blocked_reason" json:"blocked_reason"`
-	Branch        *string            `db:"branch" json:"branch"`
-	Execution     []byte             `db:"execution" json:"execution"`
-	Pr            []byte             `db:"pr" json:"pr"`
-	WorkspacePr   []byte             `db:"workspace_pr" json:"workspace_pr"`
-	SourcePath    *string            `db:"source_path" json:"source_path"`
-	SourceHash    *string            `db:"source_hash" json:"source_hash"`
-	CreatedAt     pgtype.Timestamptz `db:"created_at" json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
-	FeatureName   string             `db:"feature_name" json:"feature_name"`
-	FeatureID     pgtype.UUID        `db:"feature_id" json:"feature_id"`
-	TaskName      string             `db:"task_name" json:"task_name"`
-	TaskID        pgtype.UUID        `db:"task_id" json:"task_id"`
-	Owner         *string            `db:"owner" json:"owner"`
+	ID                    pgtype.UUID        `db:"id" json:"id"`
+	WorkspaceID           pgtype.UUID        `db:"workspace_id" json:"workspace_id"`
+	Title                 string             `db:"title" json:"title"`
+	Repo                  *string            `db:"repo" json:"repo"`
+	Status                *string            `db:"status" json:"status"`
+	DependsOn             json.RawMessage    `db:"depends_on" json:"depends_on"`
+	BlockedReason         *string            `db:"blocked_reason" json:"blocked_reason"`
+	Branch                *string            `db:"branch" json:"branch"`
+	Execution             []byte             `db:"execution" json:"execution"`
+	Pr                    []byte             `db:"pr" json:"pr"`
+	WorkspacePr           []byte             `db:"workspace_pr" json:"workspace_pr"`
+	SourcePath            *string            `db:"source_path" json:"source_path"`
+	SourceHash            *string            `db:"source_hash" json:"source_hash"`
+	CreatedAt             pgtype.Timestamptz `db:"created_at" json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
+	FeatureName           string             `db:"feature_name" json:"feature_name"`
+	FeatureID             pgtype.UUID        `db:"feature_id" json:"feature_id"`
+	TaskName              string             `db:"task_name" json:"task_name"`
+	TaskID                pgtype.UUID        `db:"task_id" json:"task_id"`
+	Owner                 *string            `db:"owner" json:"owner"`
+	DispatchHandle        *string            `db:"dispatch_handle" json:"dispatch_handle"`
+	DispatchNonce         *string            `db:"dispatch_nonce" json:"dispatch_nonce"`
+	DispatchedAt          pgtype.Timestamptz `db:"dispatched_at" json:"dispatched_at"`
+	ReenqueueAttempts     int32              `db:"reenqueue_attempts" json:"reenqueue_attempts"`
+	ReviewIncompleteCount int32              `db:"review_incomplete_count" json:"review_incomplete_count"`
+	MaxTurnsRetryCount    int32              `db:"max_turns_retry_count" json:"max_turns_retry_count"`
+	RebaseAttempts        int32              `db:"rebase_attempts" json:"rebase_attempts"`
+	ConflictState         string             `db:"conflict_state" json:"conflict_state"`
+	DispatchKind          *string            `db:"dispatch_kind" json:"dispatch_kind"`
+	BlockedFromStatus     *string            `db:"blocked_from_status" json:"blocked_from_status"`
+	BlockedDetails        *string            `db:"blocked_details" json:"blocked_details"`
 }
