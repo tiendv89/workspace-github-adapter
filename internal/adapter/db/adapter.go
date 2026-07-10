@@ -833,7 +833,7 @@ func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUI
 		return fmt.Errorf("upsert task %s/%s: %w", featureName, t.TaskID, err)
 	}
 
-	// Task-level activity keys on the same feature_id business key.
+	// Task-level activity keys on the same feature_id reference.
 	if err := upsertTaskActivity(ctx, q, uid, featureRef, featureName, taskRow.ID, t); err != nil {
 		return err
 	}
