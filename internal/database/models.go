@@ -63,7 +63,6 @@ type WorkspaceFeature struct {
 	CreatedAt     pgtype.Timestamptz `db:"created_at" json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `db:"updated_at" json:"updated_at"`
 	FeatureName   string             `db:"feature_name" json:"feature_name"`
-	FeatureID     pgtype.UUID        `db:"feature_id" json:"feature_id"`
 	Owner         *string            `db:"owner" json:"owner"`
 	InitPrUrl     *string            `db:"init_pr_url" json:"init_pr_url"`
 	InitPrMerged  bool               `db:"init_pr_merged" json:"init_pr_merged"`
@@ -177,7 +176,6 @@ type WorkspaceTask struct {
 	FeatureName           string             `db:"feature_name" json:"feature_name"`
 	FeatureID             pgtype.UUID        `db:"feature_id" json:"feature_id"`
 	TaskName              string             `db:"task_name" json:"task_name"`
-	TaskID                pgtype.UUID        `db:"task_id" json:"task_id"`
 	Owner                 *string            `db:"owner" json:"owner"`
 	DispatchHandle        *string            `db:"dispatch_handle" json:"dispatch_handle"`
 	DispatchNonce         *string            `db:"dispatch_nonce" json:"dispatch_nonce"`

@@ -50,22 +50,22 @@ func (q *Queries) DeleteFeatureTasksNotIn(ctx context.Context, arg DeleteFeature
 const getWorkspaceTask = `-- name: GetWorkspaceTask :one
 SELECT id, workspace_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
-       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner,
+       created_at, updated_at, feature_name, feature_id, task_name, owner,
        dispatch_handle, dispatch_nonce, dispatched_at, reenqueue_attempts,
        review_incomplete_count, max_turns_retry_count, rebase_attempts,
        conflict_state, dispatch_kind, blocked_from_status, blocked_details
 FROM workspace_tasks
-WHERE workspace_id = $1 AND feature_id = $2 AND task_id = $3
+WHERE workspace_id = $1 AND feature_id = $2 AND id = $3
 `
 
 type GetWorkspaceTaskParams struct {
 	WorkspaceID pgtype.UUID `db:"workspace_id" json:"workspace_id"`
 	FeatureID   pgtype.UUID `db:"feature_id" json:"feature_id"`
-	TaskID      pgtype.UUID `db:"task_id" json:"task_id"`
+	ID          pgtype.UUID `db:"id" json:"id"`
 }
 
 func (q *Queries) GetWorkspaceTask(ctx context.Context, arg GetWorkspaceTaskParams) (WorkspaceTask, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceTask, arg.WorkspaceID, arg.FeatureID, arg.TaskID)
+	row := q.db.QueryRow(ctx, getWorkspaceTask, arg.WorkspaceID, arg.FeatureID, arg.ID)
 	var i WorkspaceTask
 	err := row.Scan(
 		&i.ID,
@@ -86,7 +86,6 @@ func (q *Queries) GetWorkspaceTask(ctx context.Context, arg GetWorkspaceTaskPara
 		&i.FeatureName,
 		&i.FeatureID,
 		&i.TaskName,
-		&i.TaskID,
 		&i.Owner,
 		&i.DispatchHandle,
 		&i.DispatchNonce,
@@ -106,7 +105,7 @@ func (q *Queries) GetWorkspaceTask(ctx context.Context, arg GetWorkspaceTaskPara
 const listFeatureTasks = `-- name: ListFeatureTasks :many
 SELECT id, workspace_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
-       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner,
+       created_at, updated_at, feature_name, feature_id, task_name, owner,
        dispatch_handle, dispatch_nonce, dispatched_at, reenqueue_attempts,
        review_incomplete_count, max_turns_retry_count, rebase_attempts,
        conflict_state, dispatch_kind, blocked_from_status, blocked_details
@@ -148,7 +147,6 @@ func (q *Queries) ListFeatureTasks(ctx context.Context, arg ListFeatureTasksPara
 			&i.FeatureName,
 			&i.FeatureID,
 			&i.TaskName,
-			&i.TaskID,
 			&i.Owner,
 			&i.DispatchHandle,
 			&i.DispatchNonce,
@@ -175,7 +173,7 @@ func (q *Queries) ListFeatureTasks(ctx context.Context, arg ListFeatureTasksPara
 const listWorkspaceTasks = `-- name: ListWorkspaceTasks :many
 SELECT id, workspace_id, title, repo, status, depends_on,
        blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
-       created_at, updated_at, feature_name, feature_id, task_name, task_id, owner,
+       created_at, updated_at, feature_name, feature_id, task_name, owner,
        dispatch_handle, dispatch_nonce, dispatched_at, reenqueue_attempts,
        review_incomplete_count, max_turns_retry_count, rebase_attempts,
        conflict_state, dispatch_kind, blocked_from_status, blocked_details
@@ -212,7 +210,6 @@ func (q *Queries) ListWorkspaceTasks(ctx context.Context, workspaceID pgtype.UUI
 			&i.FeatureName,
 			&i.FeatureID,
 			&i.TaskName,
-			&i.TaskID,
 			&i.Owner,
 			&i.DispatchHandle,
 			&i.DispatchNonce,
@@ -244,11 +241,11 @@ WITH task_input AS (
     ) AS task_uuid
 )
 INSERT INTO workspace_tasks (
-    id, workspace_id, feature_id, feature_name, task_id, task_name, title, repo, status, depends_on,
+    id, workspace_id, feature_id, feature_name, task_name, title, repo, status, depends_on,
     blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
     created_at, updated_at
 )
-SELECT task_uuid, $1, $2, $3, task_uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now()
+SELECT task_uuid, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now()
 FROM task_input
 ON CONFLICT (workspace_id, feature_id, task_name) DO UPDATE SET
     feature_name   = EXCLUDED.feature_name,
@@ -267,7 +264,7 @@ ON CONFLICT (workspace_id, feature_id, task_name) DO UPDATE SET
     updated_at     = now()
 RETURNING id, workspace_id, title, repo, status, depends_on,
           blocked_reason, branch, execution, pr, workspace_pr, source_path, source_hash,
-          created_at, updated_at, feature_name, feature_id, task_name, task_id, owner,
+          created_at, updated_at, feature_name, feature_id, task_name, owner,
           dispatch_handle, dispatch_nonce, dispatched_at, reenqueue_attempts,
           review_incomplete_count, max_turns_retry_count, rebase_attempts,
           conflict_state, dispatch_kind, blocked_from_status, blocked_details
@@ -329,7 +326,6 @@ func (q *Queries) UpsertWorkspaceTask(ctx context.Context, arg UpsertWorkspaceTa
 		&i.FeatureName,
 		&i.FeatureID,
 		&i.TaskName,
-		&i.TaskID,
 		&i.Owner,
 		&i.DispatchHandle,
 		&i.DispatchNonce,
