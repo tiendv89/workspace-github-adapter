@@ -725,9 +725,11 @@ func TestOwnerFilter_UpsertFeatureSQL(t *testing.T) {
 //
 // These tests verify that the UpsertWorkspaceFeature SQL contains the CASE
 // guard that prevents the adapter from clobbering orchestrator-owned
-// feature_status/current_stage/next_action values (in_implementation,
-// in_handoff) for owner='go' rows unless the incoming status is
-// cancelled or done.
+// feature_status/current_stage/next_action values for owner='go' rows once
+// the feature has advanced past tech design. The guard protects the four
+// post-tech-design statuses (ready_for_implementation, in_implementation,
+// in_handoff, done) unconditionally — GitHub can no longer override them,
+// not even to cancelled or done.
 // ---------------------------------------------------------------------------
 
 // TestOwnerScope_UpsertFeatureSQL_HasCaseGuard verifies that the generated SQL
@@ -751,8 +753,7 @@ func TestOwnerScope_UpsertFeatureSQL_HasCaseGuard(t *testing.T) {
 
 	requiredFragments := []string{
 		"workspace_features.owner = 'go'",
-		"workspace_features.feature_status IN ('in_implementation', 'in_handoff')",
-		"EXCLUDED.feature_status NOT IN ('cancelled', 'done')",
+		"workspace_features.feature_status IN ('ready_for_implementation', 'in_implementation', 'in_handoff', 'done')",
 		"THEN workspace_features.feature_status",
 		"THEN workspace_features.current_stage",
 		"THEN workspace_features.next_action",
@@ -780,8 +781,8 @@ func TestOwnerScope_UpsertFeatureSQL_HasCaseGuard(t *testing.T) {
 // UpsertWorkspaceFeature without a live database.
 //
 // When QueryRow is called for the upsert, it applies the same CASE logic as
-// the SQL: if owner='go' AND feature_status ∈ {in_implementation, in_handoff}
-// AND incoming NOT IN {cancelled, done}, keep the existing values; else sync.
+// the SQL: if owner='go' AND feature_status ∈ {ready_for_implementation,
+// in_implementation, in_handoff, done}, keep the existing values; else sync.
 // ---------------------------------------------------------------------------
 
 // caseGuardFeature holds the simulated DB state for one feature row.
@@ -837,8 +838,10 @@ func (c *caseGuardDB) QueryRow(_ context.Context, sql string, args ...interface{
 
 		// Apply the CASE guard.
 		protected := c.existing.owner == "go" &&
-			(c.existing.featureStatus == "in_implementation" || c.existing.featureStatus == "in_handoff") &&
-			(incomingStatus != "cancelled" && incomingStatus != "done")
+			(c.existing.featureStatus == "ready_for_implementation" ||
+				c.existing.featureStatus == "in_implementation" ||
+				c.existing.featureStatus == "in_handoff" ||
+				c.existing.featureStatus == "done")
 		if protected {
 			resultStatus = c.existing.featureStatus
 			resultStage = c.existing.currentStage
@@ -1000,9 +1003,10 @@ func TestOwnerScope_GoFeature_ProtectsInHandoff(t *testing.T) {
 	}
 }
 
-// TestOwnerScope_GoFeature_AllowsCancelled verifies that cancelled overrides
-// the guard even when the current status is in_implementation.
-func TestOwnerScope_GoFeature_AllowsCancelled(t *testing.T) {
+// TestOwnerScope_GoFeature_ProtectsAgainstCancelled verifies that an incoming
+// cancelled status does NOT override a protected go-owned feature (full
+// protection — the guard no longer has a terminal-status bypass).
+func TestOwnerScope_GoFeature_ProtectsAgainstCancelled(t *testing.T) {
 	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
 	mock := &caseGuardDB{
 		featureID: featureID,
@@ -1029,14 +1033,14 @@ func TestOwnerScope_GoFeature_AllowsCancelled(t *testing.T) {
 	if mock.written == nil {
 		t.Fatal("no upsert was executed")
 	}
-	if mock.written.featureStatus != "cancelled" {
-		t.Errorf("feature_status: got %q, want %q (cancelled must bypass guard)", mock.written.featureStatus, "cancelled")
+	if mock.written.featureStatus != "in_implementation" {
+		t.Errorf("feature_status: got %q, want %q (cancelled must not override guard)", mock.written.featureStatus, "in_implementation")
 	}
 }
 
-// TestOwnerScope_GoFeature_AllowsDone verifies that done overrides the guard
-// even when the current status is in_handoff.
-func TestOwnerScope_GoFeature_AllowsDone(t *testing.T) {
+// TestOwnerScope_GoFeature_ProtectsAgainstDone verifies that an incoming done
+// status does NOT override a protected go-owned feature (full protection).
+func TestOwnerScope_GoFeature_ProtectsAgainstDone(t *testing.T) {
 	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
 	mock := &caseGuardDB{
 		featureID: featureID,
@@ -1063,14 +1067,93 @@ func TestOwnerScope_GoFeature_AllowsDone(t *testing.T) {
 	if mock.written == nil {
 		t.Fatal("no upsert was executed")
 	}
+	if mock.written.featureStatus != "in_handoff" {
+		t.Errorf("feature_status: got %q, want %q (done must not override guard)", mock.written.featureStatus, "in_handoff")
+	}
+}
+
+// TestOwnerScope_GoFeature_ProtectsReadyForImplementation verifies that a
+// go-owned feature at ready_for_implementation is not overwritten by an
+// incoming (earlier) status from GitHub.
+func TestOwnerScope_GoFeature_ProtectsReadyForImplementation(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	mock := &caseGuardDB{
+		featureID: featureID,
+		existing: &caseGuardFeature{
+			owner:         "go",
+			featureStatus: "ready_for_implementation",
+			currentStage:  "implementation",
+			nextAction:    "start wave 1",
+		},
+	}
+	q := database.New(mock)
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID:    "go-feature",
+		Title:        "Go Feature",
+		Status:       "in_tdd",
+		CurrentStage: "technical_design",
+		NextAction:   "run tech-lead",
+		Owner:        "go",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	if mock.written == nil {
+		t.Fatal("no upsert was executed")
+	}
+	if mock.written.featureStatus != "ready_for_implementation" {
+		t.Errorf("feature_status: got %q, want %q (guard must hold)", mock.written.featureStatus, "ready_for_implementation")
+	}
+	if mock.written.currentStage != "implementation" {
+		t.Errorf("current_stage: got %q, want %q (guard must hold)", mock.written.currentStage, "implementation")
+	}
+	if mock.written.nextAction != "start wave 1" {
+		t.Errorf("next_action: got %q, want %q (guard must hold)", mock.written.nextAction, "start wave 1")
+	}
+}
+
+// TestOwnerScope_GoFeature_ProtectsDone verifies that a go-owned feature that
+// is already done is not overwritten by an incoming status from GitHub.
+func TestOwnerScope_GoFeature_ProtectsDone(t *testing.T) {
+	featureID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440020")
+	mock := &caseGuardDB{
+		featureID: featureID,
+		existing: &caseGuardFeature{
+			owner:         "go",
+			featureStatus: "done",
+			currentStage:  "done",
+			nextAction:    "",
+		},
+	}
+	q := database.New(mock)
+	workspaceID := db.UUIDFromString("550e8400-e29b-41d4-a716-446655440000")
+
+	err := db.ExportedUpsertFeatureSnapshot(context.Background(), q, workspaceID, domain.FeatureSnapshot{
+		FeatureID: "go-feature",
+		Title:     "Go Feature",
+		Status:    "in_handoff",
+		Owner:     "go",
+	})
+	if err != nil {
+		t.Fatalf("upsertFeatureSnapshot: %v", err)
+	}
+
+	if mock.written == nil {
+		t.Fatal("no upsert was executed")
+	}
 	if mock.written.featureStatus != "done" {
-		t.Errorf("feature_status: got %q, want %q (done must bypass guard)", mock.written.featureStatus, "done")
+		t.Errorf("feature_status: got %q, want %q (guard must hold)", mock.written.featureStatus, "done")
 	}
 }
 
 // TestOwnerScope_GoFeature_SyncsDesignPhaseStatuses verifies that design-phase
-// statuses (in_design, in_tdd, ready_for_implementation) are always synced when
-// the current DB value is also a design-phase status (guard condition not met).
+// statuses (in_design, in_tdd) are always synced when the current DB value is
+// also a design-phase status (guard condition not met). Note that
+// ready_for_implementation is now a protected post-tech-design status, so it is
+// covered by TestOwnerScope_GoFeature_ProtectsReadyForImplementation instead.
 func TestOwnerScope_GoFeature_SyncsDesignPhaseStatuses(t *testing.T) {
 	cases := []struct {
 		existing string
@@ -1078,7 +1161,7 @@ func TestOwnerScope_GoFeature_SyncsDesignPhaseStatuses(t *testing.T) {
 	}{
 		{"in_design", "in_tdd"},
 		{"in_tdd", "ready_for_implementation"},
-		{"ready_for_implementation", "in_design"},
+		{"in_design", "in_design"},
 	}
 
 	for _, tc := range cases {

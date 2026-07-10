@@ -30,22 +30,19 @@ ON CONFLICT (workspace_id, feature_name) DO UPDATE SET
     title          = EXCLUDED.title,
     feature_status = CASE
         WHEN workspace_features.owner = 'go'
-             AND workspace_features.feature_status IN ('in_implementation', 'in_handoff')
-             AND EXCLUDED.feature_status NOT IN ('cancelled', 'done')
+             AND workspace_features.feature_status IN ('ready_for_implementation', 'in_implementation', 'in_handoff', 'done')
         THEN workspace_features.feature_status
         ELSE EXCLUDED.feature_status
     END,
     current_stage  = CASE
         WHEN workspace_features.owner = 'go'
-             AND workspace_features.feature_status IN ('in_implementation', 'in_handoff')
-             AND EXCLUDED.feature_status NOT IN ('cancelled', 'done')
+             AND workspace_features.feature_status IN ('ready_for_implementation', 'in_implementation', 'in_handoff', 'done')
         THEN workspace_features.current_stage
         ELSE EXCLUDED.current_stage
     END,
     next_action    = CASE
         WHEN workspace_features.owner = 'go'
-             AND workspace_features.feature_status IN ('in_implementation', 'in_handoff')
-             AND EXCLUDED.feature_status NOT IN ('cancelled', 'done')
+             AND workspace_features.feature_status IN ('ready_for_implementation', 'in_implementation', 'in_handoff', 'done')
         THEN workspace_features.next_action
         ELSE EXCLUDED.next_action
     END,
