@@ -109,12 +109,13 @@ func TestRowToTaskSummary(t *testing.T) {
 		DependsOn:     json.RawMessage(`["T0"]`),
 	}
 	_ = row.ID.Scan("550e8400-e29b-41d4-a716-446655440010")
-	_ = row.TaskID.Scan("550e8400-e29b-41d4-a716-446655440011")
 	_ = row.FeatureID.Scan("550e8400-e29b-41d4-a716-446655440020")
 
 	got := db.ExportedRowToTaskSummary(row)
 
-	if got.TaskID != "550e8400-e29b-41d4-a716-446655440011" {
+	// After migration 00022 task_id is dropped; TaskID in the domain summary
+	// is populated from id (the sole identity column).
+	if got.TaskID != "550e8400-e29b-41d4-a716-446655440010" {
 		t.Errorf("TaskID: got %q", got.TaskID)
 	}
 	if got.TaskName != "T1" {
@@ -273,7 +274,9 @@ func TestRowToFeatureSummary(t *testing.T) {
 		Title:       "Feature One",
 		UpdatedAt:   pgtype.Timestamptz{Valid: true, Time: time.Now()},
 	}
-	_ = feat.FeatureID.Scan("550e8400-e29b-41d4-a716-446655440021")
+	// After migration 00022 feature_id is dropped; FeatureID in the domain summary
+	// is populated from id (the sole identity column).
+	_ = feat.ID.Scan("550e8400-e29b-41d4-a716-446655440021")
 	inProgress := "in_progress"
 	done := "done"
 	blocked := "blocked"

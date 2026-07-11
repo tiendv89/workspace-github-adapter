@@ -10,6 +10,9 @@
 --      against that database, replacing this file's body below.
 --   3. Update database/queries/*.sql for any new/changed columns, then
 --      `make sqlc` and fix up internal/adapter/db as needed.
+--
+-- Last refreshed: migration 00022_unify_identity (drops workspace_features.feature_id
+-- and workspace_tasks.task_id; id is now the sole identity column on both tables).
 
 
 --
@@ -117,7 +120,6 @@ CREATE TABLE public.workspace_features (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     feature_name text NOT NULL,
-    feature_id uuid DEFAULT gen_random_uuid() NOT NULL,
     owner text,
     init_pr_url text,
     init_pr_merged boolean DEFAULT false NOT NULL
@@ -211,7 +213,6 @@ CREATE TABLE public.workspace_tasks (
     feature_name text NOT NULL,
     feature_id uuid NOT NULL,
     task_name text NOT NULL,
-    task_id uuid DEFAULT gen_random_uuid() NOT NULL,
     owner text,
     dispatch_handle text,
     dispatch_nonce text,
@@ -306,25 +307,11 @@ ALTER TABLE ONLY public.workspace_feature_handoffs
     ADD CONSTRAINT workspace_feature_handoffs_pkey PRIMARY KEY (id);
 
 --
--- Name: workspace_features workspace_features_feature_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.workspace_features
-    ADD CONSTRAINT workspace_features_feature_id_key UNIQUE (feature_id);
-
---
 -- Name: workspace_features workspace_features_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.workspace_features
     ADD CONSTRAINT workspace_features_pkey PRIMARY KEY (id);
-
---
--- Name: workspace_features workspace_features_workspace_feature_id_unique; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.workspace_features
-    ADD CONSTRAINT workspace_features_workspace_feature_id_unique UNIQUE (workspace_id, feature_id);
 
 --
 -- Name: workspace_features workspace_features_workspace_feature_name_unique; Type: CONSTRAINT; Schema: public; Owner: -
@@ -395,13 +382,6 @@ ALTER TABLE ONLY public.workspace_tasks
 
 ALTER TABLE ONLY public.workspace_tasks
     ADD CONSTRAINT workspace_tasks_workspace_feature_task_unique UNIQUE (workspace_id, feature_id, task_name);
-
---
--- Name: workspace_tasks workspace_tasks_workspace_task_id_unique; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.workspace_tasks
-    ADD CONSTRAINT workspace_tasks_workspace_task_id_unique UNIQUE (workspace_id, task_id);
 
 --
 -- Name: workspaces workspaces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -585,7 +565,7 @@ ALTER TABLE ONLY public.workspace_activity_events
 --
 
 ALTER TABLE ONLY public.workspace_feature_documents
-    ADD CONSTRAINT workspace_feature_documents_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.workspace_features(feature_id) ON DELETE CASCADE;
+    ADD CONSTRAINT workspace_feature_documents_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.workspace_features(id) ON DELETE CASCADE;
 
 --
 -- Name: workspace_feature_documents workspace_feature_documents_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -669,7 +649,7 @@ ALTER TABLE ONLY public.workspace_sync_runs
 --
 
 ALTER TABLE ONLY public.workspace_tasks
-    ADD CONSTRAINT workspace_tasks_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.workspace_features(feature_id);
+    ADD CONSTRAINT workspace_tasks_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.workspace_features(id) ON DELETE CASCADE;
 
 --
 -- Name: workspace_tasks workspace_tasks_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -677,4 +657,3 @@ ALTER TABLE ONLY public.workspace_tasks
 
 ALTER TABLE ONLY public.workspace_tasks
     ADD CONSTRAINT workspace_tasks_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
-
