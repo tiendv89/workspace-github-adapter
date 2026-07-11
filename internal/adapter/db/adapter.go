@@ -739,8 +739,7 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 	}
 
 	// All feature-child rows (workspace_tasks, workspace_feature_documents) key on
-	// feature_id which now references workspace_features(id) — the single identity
-	// column after migration 00022. featureRow.ID is both the PK and the FK target.
+	// feature_id which now references workspace_features(id). featureRow.ID is both the PK and the FK target.
 	featureRef := featureRow.ID
 
 	// Upsert documents.
@@ -792,8 +791,7 @@ func upsertFeatureSnapshot(ctx context.Context, q *database.Queries, uid pgtype.
 }
 
 // upsertTaskSnapshot writes a task and its activity. featureRef is the feature's
-// id (the sole identity column after migration 00022) — the value all
-// feature-child tables key on via the feature_id FK.
+// id — the value all feature-child tables key on via the feature_id FK.
 func upsertTaskSnapshot(ctx context.Context, q *database.Queries, uid pgtype.UUID, featureRef pgtype.UUID, featureName string, t domain.TaskSnapshot) error {
 	dependsOn, err := json.Marshal(t.DependsOn)
 	if err != nil {
@@ -1136,7 +1134,6 @@ func parseUUID(s string) (pgtype.UUID, error) {
 }
 
 // resolveFeature maps a feature identifier (a UUID or slug name) to the feature's id.
-// After migration 00022, id is the sole identity column on workspace_features.
 func (a *Adapter) resolveFeature(ctx context.Context, workspaceID pgtype.UUID, featureIdentifier string) (pgtype.UUID, error) {
 	if featureUUID, err := parseUUIDField(featureIdentifier, "feature_id"); err == nil {
 		feature, err := a.q.GetWorkspaceFeature(ctx, database.GetWorkspaceFeatureParams{

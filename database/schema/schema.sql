@@ -106,9 +106,6 @@ CREATE TABLE public.workspace_feature_handoffs (
 --
 -- Name: workspace_features; Type: TABLE; Schema: public; Owner: -
 --
--- NOTE: feature_id column dropped by migration 00022_unify_identity.
--- id is now the sole identity column (PK and business key).
---
 
 CREATE TABLE public.workspace_features (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -195,9 +192,6 @@ CREATE TABLE public.workspace_sync_runs (
 
 --
 -- Name: workspace_tasks; Type: TABLE; Schema: public; Owner: -
---
--- NOTE: task_id column dropped by migration 00022_unify_identity.
--- id is now the sole identity column (PK and business key).
 --
 
 CREATE TABLE public.workspace_tasks (

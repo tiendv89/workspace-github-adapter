@@ -449,8 +449,7 @@ func (h *Handler) syncRunReferenceIDs(ctx context.Context, workspaceID pgtype.UU
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, fmt.Errorf("resolve sync run feature ref %s: %w", featureName, err)
 	}
-	// sync_runs.feature_id and workspace_tasks.feature_id both reference
-	// workspace_features(id) — the single identity column after migration 00022.
+	// sync_runs.feature_id and workspace_tasks.feature_id both reference workspace_features(id).
 	featureUUID = feature.ID
 	if strings.TrimSpace(taskName) == "" {
 		return featureUUID, taskUUID, nil
