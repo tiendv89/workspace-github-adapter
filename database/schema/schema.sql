@@ -11,7 +11,7 @@
 --   3. Update database/queries/*.sql for any new/changed columns, then
 --      `make sqlc` and fix up internal/adapter/db as needed.
 --
--- Last refreshed: migration 00022_unify_identity (drops workspace_features.feature_id
+-- Last refreshed: migration 00023_unify_identity (drops workspace_features.feature_id
 -- and workspace_tasks.task_id; id is now the sole identity column on both tables).
 
 
