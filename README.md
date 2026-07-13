@@ -1,4 +1,4 @@
-# workspace-github-adapter
+# workspace-github-adapter (archived)
 
 Bridges GitHub management repositories and a PostgreSQL workspace database. Single binary with two subcommands:
 
